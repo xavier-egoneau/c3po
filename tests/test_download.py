@@ -1,7 +1,7 @@
 import pytest
 
 from llm_runtime.download import (
-    GGUFFile, parse_ref, group_by_quant, choose_quant, best_fitting_quant,
+    GGUFFile, parse_ref, group_by_quant, choose_quant, best_fitting_quant, has_mmproj,
 )
 
 
@@ -63,13 +63,29 @@ def test_group_by_quant_does_not_sum_redundant_single_and_shards():
 
 
 def test_group_by_quant_keeps_largest_on_quant_collision():
-    # Modèle BF16 + un mmproj BF16 : on garde le vrai modèle (le plus gros).
+    # Deux bases distinctes partageant une quant : on garde la plus grosse.
     files = [
         GGUFFile("Model-BF16.gguf", size=14 * 1024**3, sha256="a"),
-        GGUFFile("mmproj-BF16.gguf", size=1 * 1024**3, sha256="b"),
+        GGUFFile("Model-old-BF16.gguf", size=10 * 1024**3, sha256="b"),
     ]
     opts = group_by_quant(files)
     assert opts["BF16"].total_size == 14 * 1024**3
+
+
+def test_group_by_quant_excludes_mmproj():
+    # Repo multimodal : le mmproj ne doit pas apparaître comme une quant téléchargeable.
+    files = [
+        GGUFFile("Model-Q4_K_M.gguf", size=4 * 1024**3, sha256="a"),
+        GGUFFile("mmproj-F16.gguf", size=1 * 1024**3, sha256="b"),
+    ]
+    opts = group_by_quant(files)
+    assert set(opts) == {"Q4_K_M"}
+    assert has_mmproj(files) is True
+
+
+def test_has_mmproj_false_for_text_only():
+    files = [GGUFFile("Model-Q4_K_M.gguf", size=4 * 1024**3, sha256="a")]
+    assert has_mmproj(files) is False
 
 
 def test_choose_quant_picks_largest_that_fits():

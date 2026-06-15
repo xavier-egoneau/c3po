@@ -325,8 +325,16 @@ multi-worker existant ; `--jobs` permet toujours de forcer. Vérifié : `c3po ba
   ×1.15 dispersés dans `optimal_jobs`, `check_memory_pressure`, `download`). Une seule
   source de vérité pour « est-ce que ce modèle tient ».
 
-Points de la revue restant ouverts (non bugs, décisions de conception) : `search`/`load`
-trompeurs sur les modèles multimodaux (mmproj non téléchargé) — dernier point notable.
+**Modèles multimodaux honnêtes (point #9, dernier de la revue).** Détection d'un repo
+multimodal via la présence d'un fichier `mmproj*.gguf` (`has_mmproj`). `group_by_quant`
+exclut désormais les `mmproj` (ce ne sont pas des modèles texte téléchargeables seuls, et
+ils faussaient les quants). `c3po search` marque ces repos d'un `*` avec une légende ;
+`c3po load` affiche un avertissement clair (« c3po ne sert que la partie texte »). c3po ne
+prétend donc plus supporter la vision/audio. Vérifié : repos `Qwen2.5-VL` marqués `*` dans
+`search` ; avertissement affiché par `load`.
+
+Tous les points de la revue critique sont désormais traités (4 bugs + 5 points de
+conception : params CUDA, batch GPU, VRAM déterministe, marges centralisées, multimodal).
 
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 

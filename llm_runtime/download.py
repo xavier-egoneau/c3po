@@ -325,6 +325,13 @@ def load(ref: str, quant: str | None = None, dest_dir: str | Path | None = None)
     files = fetch_gguf_files(repo)
     options = group_by_quant(files)
 
+    if has_mmproj(files):
+        print(
+            "⚠ Modèle multimodal (mmproj détecté). c3po ne télécharge et ne sert que la "
+            "partie texte — la vision/audio n'est pas supportée.",
+            file=sys.stderr,
+        )
+
     available_gb = detect_hardware().gpu_memory_gb
     option = choose_quant(options, available_gb, requested=quant)
 
@@ -357,6 +364,7 @@ class SearchResult:
     quant: str            # meilleure quant pour ce hardware (ou la plus petite si rien ne tient)
     size_gb: float        # taille de cette quant
     fits: bool            # tient dans la mémoire dispo ?
+    multimodal: bool = False  # repo avec mmproj → c3po ne charge que la partie texte
 
 
 def search_repos(query: str, limit: int = 20) -> list[dict]:
@@ -388,9 +396,10 @@ def search_eligible(
     def inspect(meta: dict) -> SearchResult | None:
         repo = meta.get("id", "")
         try:
-            options = group_by_quant(fetch_gguf_files(repo))
+            files = fetch_gguf_files(repo)
         except Exception:
             return None  # repo gated / sans tree accessible → on l'ignore
+        options = group_by_quant(files)
         if not options:
             return None
         best, fits = best_fitting_quant(options, available_gb)
@@ -400,6 +409,7 @@ def search_eligible(
             quant=best.quant,
             size_gb=round(best.total_size / 1024**3, 1),
             fits=fits,
+            multimodal=has_mmproj(files),
         )
 
     with ThreadPoolExecutor(max_workers=8) as pool:

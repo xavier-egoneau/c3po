@@ -212,10 +212,16 @@ def cmd_search(args):
 
     print(f"\n{'REPO':<55} {'QUANT':>10} {'TAILLE':>8}  {'FIT':>4}  {'DL':>8}")
     print("─" * 95)
+    any_mm = False
     for r in results:
         fit = "✓" if r.fits else "✗"
-        repo = r.repo if len(r.repo) <= 54 else "…" + r.repo[-53:]
+        mark = " *" if r.multimodal else ""
+        any_mm = any_mm or r.multimodal
+        repo = (r.repo + mark)
+        repo = repo if len(repo) <= 55 else "…" + repo[-54:]
         print(f"{repo:<55} {r.quant:>10} {r.size_gb:>7.1f}G  {fit:>4}  {r.downloads:>8}")
+    if any_mm:
+        print("\n* multimodal — c3po ne charge que la partie texte (pas de vision/audio).")
     print(f"\nInstaller : c3po load <repo>  (quant auto selon la VRAM)")
 
 
