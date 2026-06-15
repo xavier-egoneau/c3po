@@ -10,6 +10,7 @@ from typing import Any, Iterator
 
 from .hardware import detect_hardware, HardwareProfile
 from .params import compute_params, InferenceParams
+from .gguf import model_shape
 from .instances import check_memory_pressure, register_instance
 
 
@@ -30,8 +31,16 @@ class Engine:
             raise FileNotFoundError(f"Modèle introuvable : {self.model_path}")
 
         self.profile = profile or detect_hardware()
-        self.params = compute_params(self.profile, n_ctx=n_ctx)
         self.size_gb = self.model_path.stat().st_size / (1024 ** 3)
+
+        shape = model_shape(self.model_path)
+        self.params = compute_params(
+            self.profile,
+            n_ctx=n_ctx,
+            model_size_gb=self.size_gb,
+            n_layers=shape["n_layers"],
+            n_ctx_train=shape["n_ctx_train"],
+        )
 
         warning = check_memory_pressure(self.size_gb, self.profile.gpu_memory_gb)
         if warning:

@@ -292,8 +292,23 @@ Suite à une revue critique du projet, correction des bugs concrets identifiés 
   flag `--host` pour ouvrir explicitement sur le réseau (avertissement affiché si
   `0.0.0.0`).
 
-Points de la revue restant ouverts (non bugs, décisions de conception) : `_params_cuda`
-encore rudimentaire (n_gpu_layers magique, n_ctx non réduit selon la VRAM) ; batch
+**`_params_cuda` étoffé (point #5 de la revue) + lecteur d'en-tête GGUF** (`gguf.py`,
+nouveau). `gguf.py::model_shape()` lit `n_layers`, `n_ctx_train`, `n_embd` directement
+dans l'en-tête GGUF (stdlib `struct`, sans charger le modèle ni llama.cpp ; les gros
+tableaux comme le vocabulaire tokenizer sont sautés par `seek`). `compute_params` accepte
+désormais `model_size_gb` / `n_layers` / `n_ctx_train`, et `Engine` les fournit. Nouveau
+comportement CUDA :
+- `n_ctx` plafonné au contexte d'entraînement du modèle (jamais plus) ;
+- tout sur GPU si poids (×1.05) + KV estimé tiennent dans la VRAM (− 0.8 Go de réserve) ;
+- sinon **réduction du contexte** (3072→512) jusqu'à ce que ça tienne ;
+- en dernier recours, **offload partiel chiffré** `n_gpu_layers = n_layers × (budget/poids)`
+  au lieu de tenter `-1` et faire OOM (llama.cpp ne fait pas de spill automatique).
+Vérifié : 7B sur 4070 → -1/4096 ; 7B simulé sur 6 Go → -1/2048 ; 14B (8.5 Go) sur 4070 →
+-1/2048 (tient au lieu d'OOM à 4096). Le chemin sans info modèle reste inchangé
+(rétrocompat des tests). KV cache encore approximé (×0.20 × taille × ctx/4096) faute de
+config d'attention exacte (GQA).
+
+Points de la revue restant ouverts (non bugs, décisions de conception) : batch
 multi-process discutable sur GPU mono-carte ; `gpu_memory_gb` = VRAM libre donc non
 déterministe ; marges mémoire (×1.1 / ×1.15) éparpillées ; `search`/`load` trompeurs sur
 les modèles multimodaux (mmproj non téléchargé).
