@@ -1,0 +1,20 @@
+[project]
+name = "llm-runtime"
+version = "0.1.0"
+description = "Orchestrateur llama.cpp avec routing hardware automatique"
+requires-python = ">=3.9"
+dependencies = [
+    "llama-cpp-python>=0.3.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+c3po = "llm_runtime.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,6 @@
+#!/bin/bash
+# Résout le vrai chemin même via un symlink
+REAL="$(readlink "$0" 2>/dev/null || echo "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$REAL")" && pwd)"
+cd "$SCRIPT_DIR"
+python3 -m llm_runtime.cli "$@"
