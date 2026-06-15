@@ -40,6 +40,10 @@ c3po run <modèle> --ctx 8192 --n-gpu-layers 20 --threads 6 --no-flash-attn
 # pour faire tenir le contexte ; --kv-type q4 force le mode le plus compact (qualité moindre).
 c3po run <modèle> --ctx 32768 --kv-type q8
 
+# Speculative decoding (prompt-lookup) : accélère les sorties qui recopient l'entrée
+# (code, RAG, édition) — sortie identique, juste plus rapide. À éviter sur du texte créatif.
+c3po run <modèle> --speculative
+
 # Serveur HTTP compatible OpenAI (GET /v1/models, POST /v1/chat/completions, GET /health)
 c3po serve [<modèle>] [--port 8000]
 

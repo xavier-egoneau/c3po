@@ -15,6 +15,7 @@ class InferenceParams:
     n_ctx: int           # taille du contexte en tokens
     use_flash_attn: bool # optimisation mémoire pour longs contextes
     kv_type: str = "f16" # précision du KV cache : "f16" | "q8_0" | "q4_0"
+    speculative: bool = False  # prompt-lookup decoding (gain sur sorties qui recopient l'entrée)
 
     def __str__(self) -> str:
         gpu = "toutes" if self.n_gpu_layers == -1 else str(self.n_gpu_layers)
@@ -23,7 +24,8 @@ class InferenceParams:
             f"n_threads     : {self.n_threads}\n"
             f"n_ctx         : {self.n_ctx} tokens\n"
             f"flash_attn    : {self.use_flash_attn}\n"
-            f"kv_type       : {self.kv_type}"
+            f"kv_type       : {self.kv_type}\n"
+            f"speculative   : {self.speculative}"
         )
 
 

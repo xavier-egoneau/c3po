@@ -385,6 +385,32 @@ via `type_k`/`type_v` (vérifié présents ; `GGML_TYPE_F16=1`, `Q8_0=8`, `Q4_0=
 - Vérifié sur la 4070 : auto → f16 ; `--kv-type q8` → charge, `kv_type q8_0`, flash forcée,
   génération OK (≠ no-op). 67 tests (dont escalade auto Q8, jamais Q4 auto, override manuel).
 
+## Phase 11 — Speculative decoding (prompt-lookup), levier `--speculative` ✅
+
+Premier levier qui augmente réellement le **tok/s** (tout le reste de la soirée améliorait
+la capacité/robustesse, pas la vitesse brute — normal : c3po orchestre, il ne touche pas
+aux kernels). `llama-cpp-python` expose `LlamaPromptLookupDecoding` (vérifié importable) :
+spéculation **sans modèle draft ni VRAM en plus** — devine les prochains tokens en cherchant
+des n-grammes déjà présents dans le contexte, le gros modèle vérifie le bloc en une passe.
+
+- `InferenceParams.speculative` (défaut False) ; `Engine(speculative=...)` construit
+  `LlamaPromptLookupDecoding(max_ngram_size=2, num_pred_tokens=10)` et le passe en
+  `draft_model=` à `Llama(...)`.
+- Flag CLI **`--speculative`** (opt-in, via `_add_engine_args` → run/stats/serve/batch ;
+  serve via `LLM_RUNTIME_SPECULATIVE`). `c3po stats` affiche `speculative`.
+- **Opt-in volontaire** : gain net sur sorties qui recopient l'entrée (code, RAG, édition,
+  agents) ; léger surcoût sur du texte purement créatif (devinettes rejetées). La sortie est
+  **identique** dans tous les cas — on ne joue que sur la vitesse.
+- **Mesuré sur la 4070** (Qwen2.5-7B Q4, réécriture de code, 291 tokens, temp 0, sortie
+  identique) : **90.2 → 143.0 tok/s, ×1.59**.
+
+⚠️ **Découverte au bench (limite CUDA, non liée à la spéculation)** : charger deux modèles
+successivement dans le **même process** sur CUDA crashe (`ggml_cuda_error` dans
+`mul_mat_q`) — le `del + gc.collect()` ne garantit pas la libération du contexte CUDA. Ça
+**impacte potentiellement le swap de modèle du serveur** (`server.get_engine`) sur CUDA
+(testé seulement sur Metal jusqu'ici). À vérifier/fixer plus tard (libération explicite du
+backend, ou modèle par process). Chaque commande chargeant un seul modèle n'est pas affectée.
+
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
 Le modèle **gemma4:e4b** via Ollama (blob `sha256-4c27e0f5...`, ~8.9 Go) est un GGUF valide

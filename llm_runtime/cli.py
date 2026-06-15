@@ -265,6 +265,8 @@ def cmd_serve(args):
         env["LLM_RUNTIME_FLASH_ATTN"] = "1" if args.flash_attn else "0"
     if args.kv_type is not None:
         env["LLM_RUNTIME_KV_TYPE"] = _KV_ALIASES[args.kv_type]
+    if args.speculative:
+        env["LLM_RUNTIME_SPECULATIVE"] = "1"
 
     print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
     if args.host == "0.0.0.0":
@@ -329,6 +331,9 @@ def _add_engine_args(parser: argparse.ArgumentParser, ctx_default: int = 4096) -
     parser.add_argument("--kv-type", choices=["f16", "q8", "q4"], default=None, dest="kv_type",
                         help="Précision du KV cache (auto si omis : F16, ou Q8 si besoin pour "
                              "tenir le contexte ; Q4 uniquement explicite)")
+    parser.add_argument("--speculative", action="store_true",
+                        help="Prompt-lookup decoding : accélère les sorties qui recopient "
+                             "l'entrée (code, RAG, édition) ; à éviter sur du texte créatif")
 
 
 # Alias CLI courts → noms ggml canoniques
@@ -343,6 +348,7 @@ def _engine_overrides(args) -> dict:
         "n_threads": getattr(args, "threads", None),
         "flash_attn": getattr(args, "flash_attn", None),
         "kv_type": _KV_ALIASES.get(kv) if kv else None,
+        "speculative": getattr(args, "speculative", False),
     }
 
 

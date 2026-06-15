@@ -29,6 +29,7 @@ class Engine:
         n_threads: int | None = None,
         flash_attn: bool | None = None,
         kv_type: str | None = None,
+        speculative: bool = False,
     ):
         self.model_path = Path(model_path)
         if not self.model_path.exists():
@@ -64,6 +65,8 @@ class Engine:
                 file=sys.stderr,
             )
 
+        self.params.speculative = speculative
+
         warning = check_memory_pressure(self.size_gb, self.profile.gpu_memory_gb)
         if warning:
             print(warning, file=sys.stderr)
@@ -87,6 +90,13 @@ class Engine:
             "q4_0": llama_cpp.GGML_TYPE_Q4_0,
         }[self.params.kv_type]
 
+        # Prompt-lookup decoding : devine les prochains tokens en cherchant des n-grammes
+        # déjà présents dans le contexte. Aucun modèle draft ni VRAM en plus.
+        draft_model = None
+        if self.params.speculative:
+            from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
+            draft_model = LlamaPromptLookupDecoding(max_ngram_size=2, num_pred_tokens=10)
+
         return Llama(
             model_path=str(self.model_path),
             n_gpu_layers=self.params.n_gpu_layers,
@@ -95,6 +105,7 @@ class Engine:
             flash_attn=self.params.use_flash_attn,
             type_k=kv_ggml,
             type_v=kv_ggml,
+            draft_model=draft_model,
             verbose=False,
         )
 

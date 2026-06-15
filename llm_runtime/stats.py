@@ -49,6 +49,7 @@ class ModelStats:
     n_ctx: int
     flash_attn: bool
     kv_type: str
+    speculative: bool
 
     # Benchmark
     load_time_s: float
@@ -139,11 +140,12 @@ def collect_stats(
     n_threads: int | None = None,
     flash_attn: bool | None = None,
     kv_type: str | None = None,
+    speculative: bool = False,
 ) -> ModelStats:
     """
     Charge le modèle, lit ses métadonnées et lance un benchmark de génération.
-    Les leviers (n_gpu_layers/n_threads/flash_attn/kv_type) sont transmis à l'Engine ;
-    les stats reflètent donc la configuration réellement appliquée.
+    Les leviers (n_gpu_layers/n_threads/flash_attn/kv_type/speculative) sont transmis à
+    l'Engine ; les stats reflètent donc la configuration réellement appliquée.
     """
     from .engine import Engine
 
@@ -156,7 +158,7 @@ def collect_stats(
     engine = Engine(
         model_path, n_ctx=n_ctx, profile=profile,
         n_gpu_layers=n_gpu_layers, n_threads=n_threads, flash_attn=flash_attn,
-        kv_type=kv_type,
+        kv_type=kv_type, speculative=speculative,
     )
     load_time = time.time() - t0
     vram_after = _gpu_mem_used_mb()
@@ -207,6 +209,7 @@ def collect_stats(
         n_ctx=params.n_ctx,
         flash_attn=params.use_flash_attn,
         kv_type=params.kv_type,
+        speculative=params.speculative,
         load_time_s=round(load_time, 2),
         ttft_s=round(ttft, 3) if ttft is not None else None,
         gen_tps=round(gen_tps, 1) if gen_tps is not None else None,
@@ -245,6 +248,7 @@ def format_stats(s: ModelStats) -> str:
         line("n_ctx", f"{s.n_ctx} tokens"),
         line("flash_attn", s.flash_attn),
         line("kv_type", s.kv_type),
+        line("speculative", s.speculative),
         "",
         f"── Benchmark ({s.gen_tokens} tokens générés) ──",
         line("Chargement", f"{s.load_time_s} s"),

@@ -36,6 +36,10 @@ le PC CUDA (commits jusqu'à `963e88b`). Cocher au fur et à mesure.
 - [ ] **KV cache quantifié** : `c3po stats <modèle> --kv-type q8` → doit charger sur Metal,
       afficher `kv_type q8_0`, flash activée. (Vérifier que `type_k`/`type_v` sont honorés sur
       le backend Metal comme sur CUDA — sinon ce serait un no-op silencieux.)
+- [ ] **Speculative decoding** : benchmark A/B sur un prompt de réécriture de code —
+      `c3po stats <modèle>` puis `c3po stats <modèle> --speculative`, comparer les tok/s.
+      (Réf. CUDA 4070 : 90 → 143 tok/s, ×1.59.) Vérifier que `LlamaPromptLookupDecoding`
+      fonctionne sur le backend Metal.
 - [ ] `c3po serve` + requêtes `/v1/chat/completions` (streaming + non-streaming) — non régressé
 
 ## 4. Dossier modèles

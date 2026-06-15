@@ -51,6 +51,8 @@ def _engine_overrides_from_env() -> dict:
         out["flash_attn"] = os.environ["LLM_RUNTIME_FLASH_ATTN"] == "1"
     if "LLM_RUNTIME_KV_TYPE" in os.environ:
         out["kv_type"] = os.environ["LLM_RUNTIME_KV_TYPE"]
+    if os.environ.get("LLM_RUNTIME_SPECULATIVE") == "1":
+        out["speculative"] = True
     return out
 
 
