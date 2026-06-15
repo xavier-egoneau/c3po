@@ -263,6 +263,8 @@ def cmd_serve(args):
         env["LLM_RUNTIME_THREADS"] = str(args.threads)
     if args.flash_attn is not None:
         env["LLM_RUNTIME_FLASH_ATTN"] = "1" if args.flash_attn else "0"
+    if args.kv_type is not None:
+        env["LLM_RUNTIME_KV_TYPE"] = _KV_ALIASES[args.kv_type]
 
     print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
     if args.host == "0.0.0.0":
@@ -324,14 +326,23 @@ def _add_engine_args(parser: argparse.ArgumentParser, ctx_default: int = 4096) -
                         help="Threads CPU (auto si omis)")
     parser.add_argument("--flash-attn", action=argparse.BooleanOptionalAction, default=None,
                         dest="flash_attn", help="Forcer/désactiver la flash attention (auto si omis)")
+    parser.add_argument("--kv-type", choices=["f16", "q8", "q4"], default=None, dest="kv_type",
+                        help="Précision du KV cache (auto si omis : F16, ou Q8 si besoin pour "
+                             "tenir le contexte ; Q4 uniquement explicite)")
+
+
+# Alias CLI courts → noms ggml canoniques
+_KV_ALIASES = {"f16": "f16", "q8": "q8_0", "q4": "q4_0"}
 
 
 def _engine_overrides(args) -> dict:
     """Extrait les leviers explicites depuis les args parsés."""
+    kv = getattr(args, "kv_type", None)
     return {
         "n_gpu_layers": getattr(args, "n_gpu_layers", None),
         "n_threads": getattr(args, "threads", None),
         "flash_attn": getattr(args, "flash_attn", None),
+        "kv_type": _KV_ALIASES.get(kv) if kv else None,
     }
 
 

@@ -33,6 +33,9 @@ le PC CUDA (commits jusqu'à `963e88b`). Cocher au fur et à mesure.
       (réf. PC : ~91 tok/s gen, TTFT ~4 ms après warmup sur la 4070)
 - [ ] **Leviers exposés** : `c3po run <modèle> --ctx 8192 --no-flash-attn --threads 6`
       → vérifier que les overrides sont bien appliqués (visible via `c3po stats … <flags>`)
+- [ ] **KV cache quantifié** : `c3po stats <modèle> --kv-type q8` → doit charger sur Metal,
+      afficher `kv_type q8_0`, flash activée. (Vérifier que `type_k`/`type_v` sont honorés sur
+      le backend Metal comme sur CUDA — sinon ce serait un no-op silencieux.)
 - [ ] `c3po serve` + requêtes `/v1/chat/completions` (streaming + non-streaming) — non régressé
 
 ## 4. Dossier modèles

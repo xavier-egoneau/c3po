@@ -36,6 +36,9 @@ c3po run <modèle>
 
 # Leviers d'inférence exposés (sinon auto-calculés selon le hardware) — sur run/stats/serve/batch
 c3po run <modèle> --ctx 8192 --n-gpu-layers 20 --threads 6 --no-flash-attn
+# Quantization du KV cache (réduit la VRAM sur long contexte). Auto : F16, ou Q8 si besoin
+# pour faire tenir le contexte ; --kv-type q4 force le mode le plus compact (qualité moindre).
+c3po run <modèle> --ctx 32768 --kv-type q8
 
 # Serveur HTTP compatible OpenAI (GET /v1/models, POST /v1/chat/completions, GET /health)
 c3po serve [<modèle>] [--port 8000]

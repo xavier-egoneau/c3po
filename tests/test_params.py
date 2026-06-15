@@ -55,13 +55,14 @@ def test_cuda_params_model_fits_uses_all_layers():
     assert params.n_ctx == 4096
 
 
-def test_cuda_params_reduces_ctx_when_tight():
-    # 5.5 Go : à 4096 le KV déborde, mais à 2048 ça tient → contexte réduit, tout sur GPU.
-    profile = _profile(Backend.CUDA, gpu_memory_gb=5.5, cpu_cores=16)
+def test_cuda_params_reduces_ctx_when_even_q8_is_tight():
+    # 5.3 Go : même en Q8 le contexte plein déborde → on réduit le contexte (en Q8).
+    profile = _profile(Backend.CUDA, gpu_memory_gb=5.3, cpu_cores=16)
     params = compute_params(profile, n_ctx=4096, model_size_gb=4.0, n_layers=28)
 
     assert params.n_gpu_layers == -1
-    assert params.n_ctx == 2048
+    assert params.n_ctx < 4096
+    assert params.kv_type == "q8_0"
 
 
 def test_cuda_params_partial_offload_when_model_too_big():
@@ -97,6 +98,49 @@ def test_kv_cache_falls_back_to_heuristic_without_attention_config():
     kv = _kv_cache_gb(4096, model_size_gb=5.0, n_layers=None, n_embd=None,
                       n_heads=None, n_kv_heads=None)
     assert kv == (4096 / 4096) * 5.0 * 0.20
+
+
+def test_kv_cache_q8_is_about_half_of_f16():
+    common = dict(model_size_gb=4.4, n_layers=28, n_embd=3584, n_heads=28, n_kv_heads=4)
+    kv_f16 = _kv_cache_gb(4096, kv_type="f16", **common)
+    kv_q8 = _kv_cache_gb(4096, kv_type="q8_0", **common)
+    assert abs(kv_q8 - kv_f16 * (1.0625 / 2.0)) < 1e-6
+
+
+def _gqa(**kw):
+    # config d'attention type Qwen2.5-7B (GQA 28→4)
+    return dict(model_size_gb=4.4, n_layers=28, n_embd=3584, n_heads=28, n_kv_heads=4, **kw)
+
+
+def test_cuda_auto_escalates_to_q8_to_keep_context():
+    # budget 4.8 : F16 plein (≈4.84) déborde, Q8 plein (≈4.74) tient → Q8, contexte gardé.
+    profile = _profile(Backend.CUDA, gpu_memory_gb=5.6, cpu_cores=16)
+    p = compute_params(profile, n_ctx=4096, **_gqa())
+    assert p.kv_type == "q8_0"
+    assert p.n_ctx == 4096
+    assert p.n_gpu_layers == -1
+
+
+def test_cuda_auto_never_picks_q4():
+    # VRAM très juste → on finit en offload, mais jamais en Q4 sans demande explicite.
+    profile = _profile(Backend.CUDA, gpu_memory_gb=3.0, cpu_cores=16)
+    p = compute_params(profile, n_ctx=4096, **_gqa())
+    assert p.kv_type in ("f16", "q8_0")
+    assert p.kv_type != "q4_0"
+
+
+def test_cuda_manual_kv_type_is_honored():
+    profile = _profile(Backend.CUDA, gpu_memory_gb=3.0, cpu_cores=16)
+    p = compute_params(profile, n_ctx=4096, kv_type="q4_0", **_gqa())
+    assert p.kv_type == "q4_0"
+
+
+def test_cuda_manual_f16_forces_f16_even_if_it_costs_context():
+    # À 5.6 Go l'auto choisirait Q8 plein ; forcer F16 garde la précision et réduit le ctx.
+    profile = _profile(Backend.CUDA, gpu_memory_gb=5.6, cpu_cores=16)
+    p = compute_params(profile, n_ctx=4096, kv_type="f16", **_gqa())
+    assert p.kv_type == "f16"
+    assert p.n_ctx < 4096
 
 
 def test_cuda_exact_kv_keeps_ctx_where_heuristic_would_reduce():

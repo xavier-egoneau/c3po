@@ -363,6 +363,28 @@ Bilan revue : **12/13 traités** (4 bugs + #5–#9, #10, #11, #13). Seul reste *
 couverture des chemins GPU/inférence/réseau uniquement manuelle : structurel, nécessiterait
 une CI dotée d'un GPU (les 59 tests restent de la logique pure, sans GPU ni GGUF).
 
+## Phase 10 — Quantization du KV cache (levier `--kv-type`) ✅
+
+Inspiré par une discussion sur KVFlash (technique runtime de KV cache paginé, hors
+périmètre car niveau kernel/moteur — c3po n'est qu'un orchestrateur au-dessus de
+llama-cpp-python). À notre couche, le levier réaliste contre le même mur (KV cache qui
+mange la VRAM en long contexte) est la **quantization du KV cache**, exposée par llama.cpp
+via `type_k`/`type_v` (vérifié présents ; `GGML_TYPE_F16=1`, `Q8_0=8`, `Q4_0=2`).
+
+- `_KV_BYTES` (params.py) : octets/élément par précision (F16=2, Q8_0≈1.06, Q4_0≈0.56) ;
+  `_kv_cache_gb` prend un `kv_type` → le budget VRAM connaît le coût réel selon la précision.
+- **Politique auto** (`_params_cuda`, `kv_type=None`) : F16 si ça tient au contexte demandé ;
+  sinon **Q8_0 (quasi sans perte) pour garder le contexte** ; sinon réduction du contexte
+  en Q8_0 ; sinon offload partiel. **Jamais de Q4 en auto** (perte de qualité) — uniquement
+  si l'utilisateur force `--kv-type q4`. C'est le compromis « auto + override » fidèle au
+  pitch « leviers exposés, pas cachés » : la dégradation de qualité n'est jamais silencieuse.
+- `Engine` : un KV quantifié force `flash_attn` (requis par llama.cpp), annonce sur stderr,
+  et passe `type_k`/`type_v` à `Llama(...)`.
+- Flag CLI `--kv-type f16|q8|q4` (via `_add_engine_args` → run/stats/serve/batch) ; `serve`
+  via `LLM_RUNTIME_KV_TYPE`. `c3po stats` affiche `kv_type`.
+- Vérifié sur la 4070 : auto → f16 ; `--kv-type q8` → charge, `kv_type q8_0`, flash forcée,
+  génération OK (≠ no-op). 67 tests (dont escalade auto Q8, jamais Q4 auto, override manuel).
+
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
 Le modèle **gemma4:e4b** via Ollama (blob `sha256-4c27e0f5...`, ~8.9 Go) est un GGUF valide

@@ -28,6 +28,7 @@ class Engine:
         n_gpu_layers: int | None = None,
         n_threads: int | None = None,
         flash_attn: bool | None = None,
+        kv_type: str | None = None,
     ):
         self.model_path = Path(model_path)
         if not self.model_path.exists():
@@ -46,14 +47,22 @@ class Engine:
             n_embd=shape["n_embd"],
             n_heads=shape["n_heads"],
             n_kv_heads=shape["n_kv_heads"],
+            kv_type=kv_type,  # affecte le calcul de fit → passe par compute_params
         )
-        # Leviers explicites (CLI) par-dessus les valeurs calculées.
+        # Autres leviers explicites (CLI) par-dessus les valeurs calculées.
         apply_overrides(
             self.params,
             n_gpu_layers=n_gpu_layers,
             n_threads=n_threads,
             use_flash_attn=flash_attn,
         )
+        # Un KV cache quantifié exige la flash attention dans llama.cpp.
+        if self.params.kv_type != "f16":
+            self.params.use_flash_attn = True
+            print(
+                f"KV cache en {self.params.kv_type} (flash attention activée).",
+                file=sys.stderr,
+            )
 
         warning = check_memory_pressure(self.size_gb, self.profile.gpu_memory_gb)
         if warning:
@@ -64,6 +73,7 @@ class Engine:
 
     def _load_model(self):
         try:
+            import llama_cpp
             from llama_cpp import Llama
         except ImportError:
             raise ImportError(
@@ -71,12 +81,20 @@ class Engine:
                 "Installe-le avec : pip install llama-cpp-python"
             )
 
+        kv_ggml = {
+            "f16": llama_cpp.GGML_TYPE_F16,
+            "q8_0": llama_cpp.GGML_TYPE_Q8_0,
+            "q4_0": llama_cpp.GGML_TYPE_Q4_0,
+        }[self.params.kv_type]
+
         return Llama(
             model_path=str(self.model_path),
             n_gpu_layers=self.params.n_gpu_layers,
             n_threads=self.params.n_threads,
             n_ctx=self.params.n_ctx,
             flash_attn=self.params.use_flash_attn,
+            type_k=kv_ggml,
+            type_v=kv_ggml,
             verbose=False,
         )
 

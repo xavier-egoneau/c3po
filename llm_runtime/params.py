@@ -14,6 +14,7 @@ class InferenceParams:
     n_threads: int       # threads CPU
     n_ctx: int           # taille du contexte en tokens
     use_flash_attn: bool # optimisation mémoire pour longs contextes
+    kv_type: str = "f16" # précision du KV cache : "f16" | "q8_0" | "q4_0"
 
     def __str__(self) -> str:
         gpu = "toutes" if self.n_gpu_layers == -1 else str(self.n_gpu_layers)
@@ -21,8 +22,14 @@ class InferenceParams:
             f"n_gpu_layers  : {gpu} couches\n"
             f"n_threads     : {self.n_threads}\n"
             f"n_ctx         : {self.n_ctx} tokens\n"
-            f"flash_attn    : {self.use_flash_attn}"
+            f"flash_attn    : {self.use_flash_attn}\n"
+            f"kv_type       : {self.kv_type}"
         )
+
+
+# Octets par élément du KV cache selon la précision (F16 = défaut llama.cpp).
+# Q8_0 ≈ 34 octets / 32 éléments, Q4_0 ≈ 18 / 32.
+_KV_BYTES = {"f16": 2.0, "q8_0": 1.0625, "q4_0": 0.5625}
 
 
 def compute_params(
@@ -34,6 +41,7 @@ def compute_params(
     n_embd: int | None = None,
     n_heads: int | None = None,
     n_kv_heads: int | None = None,
+    kv_type: str | None = None,
 ) -> InferenceParams:
     """
     Calcule les paramètres d'inférence optimaux selon le hardware.
@@ -46,6 +54,8 @@ def compute_params(
     n_ctx_train   : contexte max à l'entraînement ; on ne demande jamais plus.
     n_embd / n_heads / n_kv_heads : config d'attention (en-tête GGUF) → calcul exact du KV
                     cache (gère la GQA) ; à défaut on retombe sur une heuristique.
+    kv_type       : précision du KV cache forcée par l'utilisateur ("f16"/"q8_0"/"q4_0").
+                    None = auto (F16, puis Q8_0 si besoin pour tenir ; jamais Q4 en auto).
     """
     # On ne demande jamais plus de contexte que le modèle n'en supporte.
     if n_ctx_train:
@@ -55,7 +65,8 @@ def compute_params(
         return _params_metal(profile, n_ctx)
 
     elif profile.backend == Backend.CUDA:
-        return _params_cuda(profile, n_ctx, model_size_gb, n_layers, n_embd, n_heads, n_kv_heads)
+        return _params_cuda(profile, n_ctx, model_size_gb, n_layers,
+                            n_embd, n_heads, n_kv_heads, kv_type)
 
     else:  # CPU fallback
         return _params_cpu(profile, n_ctx)
@@ -95,20 +106,22 @@ def _kv_cache_gb(
     n_embd: int | None = None,
     n_heads: int | None = None,
     n_kv_heads: int | None = None,
+    kv_type: str = "f16",
 ) -> float:
     """
-    Taille du KV cache (fp16). Calcul exact si la config d'attention est connue :
-        KV = 2 (K+V) × n_layers × n_ctx × (n_kv_heads × head_dim) × 2 octets
-    avec head_dim = n_embd / n_heads. Gère la GQA (n_kv_heads < n_heads).
-    À défaut, on retombe sur une heuristique proportionnelle à la taille du modèle.
+    Taille du KV cache. Calcul exact si la config d'attention est connue :
+        KV = 2 (K+V) × n_layers × n_ctx × (n_kv_heads × head_dim) × octets/élément
+    avec head_dim = n_embd / n_heads (gère la GQA). `kv_type` donne les octets/élément
+    (F16 = 2, Q8_0 ≈ 1.06, Q4_0 ≈ 0.56). À défaut, heuristique proportionnelle.
     """
+    bytes_per_elem = _KV_BYTES.get(kv_type, 2.0)
     if n_layers and n_embd and n_heads:
         kv_heads = n_kv_heads or n_heads          # MHA si head_count_kv absent
         head_dim = n_embd / n_heads
         kv_dim = kv_heads * head_dim
-        kv_bytes = 2 * n_layers * n_ctx * kv_dim * 2  # K+V, fp16
+        kv_bytes = 2 * n_layers * n_ctx * kv_dim * bytes_per_elem  # K+V
         return kv_bytes / 1024**3
-    return (n_ctx / 4096) * model_size_gb * 0.20      # heuristique de repli
+    return (n_ctx / 4096) * model_size_gb * 0.20 * (bytes_per_elem / 2.0)
 
 
 def _params_cuda(
@@ -119,43 +132,56 @@ def _params_cuda(
     n_embd: int | None = None,
     n_heads: int | None = None,
     n_kv_heads: int | None = None,
+    kv_type: str | None = None,
 ) -> InferenceParams:
     """
-    Nvidia : VRAM dédiée et limitée. On vise tout sur GPU quand ça tient, on réduit
-    le contexte si besoin, et en dernier recours on n'offload qu'une partie des
-    couches (calculée depuis `n_layers`) plutôt que de tenter `-1` et faire OOM.
+    Nvidia : VRAM dédiée et limitée. On vise tout sur GPU quand ça tient, et pour faire
+    rentrer le contexte demandé on dispose de deux leviers : la précision du KV cache et
+    la taille du contexte. Politique auto (kv_type None) : F16 si ça tient, sinon Q8_0
+    (quasi sans perte) pour garder le contexte, sinon on réduit le contexte (en Q8_0),
+    sinon offload partiel. **Jamais de Q4 en auto** (perte de qualité) — uniquement si
+    l'utilisateur force `kv_type="q4_0"`.
     """
     threads = min(profile.cpu_cores, 8)
 
     # Sans info sur le modèle : ancien comportement conservateur (rétrocompat).
     if model_size_gb is None:
         n_gpu_layers = -1 if profile.gpu_memory_gb >= 8.0 else 20
-        return InferenceParams(n_gpu_layers, threads, n_ctx, n_ctx > 2048)
+        return InferenceParams(n_gpu_layers, threads, n_ctx, n_ctx > 2048, kv_type or "f16")
 
     budget = max(0.0, profile.gpu_memory_gb - _CUDA_RESERVE_GB)
     weights = model_size_gb * _WEIGHTS_MARGIN
 
-    def kv(ctx: int) -> float:
-        return _kv_cache_gb(ctx, model_size_gb, n_layers, n_embd, n_heads, n_kv_heads)
+    def fits(ctx: int, kvt: str) -> bool:
+        kv = _kv_cache_gb(ctx, model_size_gb, n_layers, n_embd, n_heads, n_kv_heads, kvt)
+        return weights + kv <= budget
 
-    # 1) Tout tient au contexte demandé → toutes les couches sur GPU.
-    if weights + kv(n_ctx) <= budget:
-        return InferenceParams(-1, threads, n_ctx, n_ctx > 2048)
+    def offload(kvt: str) -> InferenceParams:
+        min_ctx = 512
+        kv = _kv_cache_gb(min_ctx, model_size_gb, n_layers, n_embd, n_heads, n_kv_heads, kvt)
+        avail = max(0.0, budget - kv)
+        if n_layers and weights > 0:
+            ngl = max(0, min(n_layers, int(n_layers * (avail / weights))))
+        else:
+            ngl = 0
+        return InferenceParams(ngl, threads, min_ctx, False, kvt)
 
-    # 2) Réduire le contexte jusqu'à ce que poids + KV tiennent.
+    # Précisions à essayer : forcée par l'utilisateur, sinon F16 puis Q8_0 (jamais Q4 auto).
+    kv_candidates = [kv_type] if kv_type else ["f16", "q8_0"]
+
+    # 1) Contexte plein : on prend la 1ère précision qui tient (meilleure d'abord).
+    for kvt in kv_candidates:
+        if fits(n_ctx, kvt):
+            return InferenceParams(-1, threads, n_ctx, n_ctx > 2048, kvt)
+
+    # 2) Contexte réduit, avec la précision la plus compacte considérée.
+    kvt = kv_candidates[-1]
     for ctx in (3072, 2048, 1536, 1024, 512):
-        if ctx < n_ctx and weights + kv(ctx) <= budget:
-            return InferenceParams(-1, threads, ctx, ctx > 2048)
+        if ctx < n_ctx and fits(ctx, kvt):
+            return InferenceParams(-1, threads, ctx, ctx > 2048, kvt)
 
     # 3) Même au minimum les poids ne tiennent pas → offload partiel chiffré.
-    min_ctx = 512
-    avail_for_weights = max(0.0, budget - kv(min_ctx))
-    if n_layers and weights > 0:
-        fraction = avail_for_weights / weights
-        n_gpu_layers = max(0, min(n_layers, int(n_layers * fraction)))
-    else:
-        n_gpu_layers = 0  # on ne connaît pas le nb de couches : tout sur CPU, sûr
-    return InferenceParams(n_gpu_layers, threads, min_ctx, False)
+    return offload(kvt)
 
 
 def apply_overrides(
