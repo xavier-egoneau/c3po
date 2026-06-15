@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .hardware import detect_hardware, HardwareProfile
-from .params import compute_params, InferenceParams
+from .params import compute_params, apply_overrides, InferenceParams
 from .gguf import model_shape
 from .instances import check_memory_pressure, register_instance
 
@@ -25,6 +25,9 @@ class Engine:
         model_path: str | Path,
         n_ctx: int = 4096,
         profile: HardwareProfile | None = None,
+        n_gpu_layers: int | None = None,
+        n_threads: int | None = None,
+        flash_attn: bool | None = None,
     ):
         self.model_path = Path(model_path)
         if not self.model_path.exists():
@@ -40,6 +43,13 @@ class Engine:
             model_size_gb=self.size_gb,
             n_layers=shape["n_layers"],
             n_ctx_train=shape["n_ctx_train"],
+        )
+        # Leviers explicites (CLI) par-dessus les valeurs calculées.
+        apply_overrides(
+            self.params,
+            n_gpu_layers=n_gpu_layers,
+            n_threads=n_threads,
+            use_flash_attn=flash_attn,
         )
 
         warning = check_memory_pressure(self.size_gb, self.profile.gpu_memory_gb)

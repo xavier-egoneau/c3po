@@ -81,7 +81,7 @@ def cmd_run(args):
         return
 
     print(f"Chargement de {model_path.name}…")
-    engine = Engine(model_path, n_ctx=args.ctx)
+    engine = Engine(model_path, n_ctx=args.ctx, **_engine_overrides(args))
     print(engine)
     print()
     print("Session de chat (Ctrl+C ou 'exit' pour quitter)")
@@ -164,7 +164,8 @@ def cmd_batch(args):
         return
 
     jobs = args.jobs or optimal_jobs(model_path, n_ctx=args.ctx)
-    summary = run_batch(tasks, model_path, jobs=jobs, n_ctx=args.ctx)
+    summary = run_batch(tasks, model_path, jobs=jobs, n_ctx=args.ctx,
+                        engine_overrides=_engine_overrides(args))
 
     if args.output:
         save_results(summary, args.output)
@@ -234,7 +235,7 @@ def cmd_stats(args):
         return
 
     print(f"Chargement et benchmark de {model_path.name}… (quelques secondes)")
-    stats = collect_stats(model_path, n_ctx=args.ctx)
+    stats = collect_stats(model_path, n_ctx=args.ctx, **_engine_overrides(args))
 
     if args.json:
         import json
@@ -255,6 +256,13 @@ def cmd_serve(args):
     env = os.environ.copy()
     if model_path:
         env["LLM_RUNTIME_MODEL"] = str(model_path)
+    env["LLM_RUNTIME_CTX"] = str(args.ctx)
+    if args.n_gpu_layers is not None:
+        env["LLM_RUNTIME_N_GPU_LAYERS"] = str(args.n_gpu_layers)
+    if args.threads is not None:
+        env["LLM_RUNTIME_THREADS"] = str(args.threads)
+    if args.flash_attn is not None:
+        env["LLM_RUNTIME_FLASH_ATTN"] = "1" if args.flash_attn else "0"
 
     print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
     if args.host == "0.0.0.0":
@@ -306,6 +314,27 @@ def _resolve_model(query: str | None) -> Path | None:
 # Parser CLI
 # ---------------------------------------------------------------------------
 
+def _add_engine_args(parser: argparse.ArgumentParser, ctx_default: int = 4096) -> None:
+    """Leviers d'inférence communs (exposés, pas cachés). None = valeur auto-calculée."""
+    parser.add_argument("--ctx", type=int, default=ctx_default,
+                        help=f"Taille du contexte en tokens (défaut: {ctx_default}, plafonné au modèle)")
+    parser.add_argument("--n-gpu-layers", type=int, default=None, dest="n_gpu_layers",
+                        help="Couches envoyées sur GPU (-1 = toutes, 0 = CPU only ; auto si omis)")
+    parser.add_argument("--threads", type=int, default=None,
+                        help="Threads CPU (auto si omis)")
+    parser.add_argument("--flash-attn", action=argparse.BooleanOptionalAction, default=None,
+                        dest="flash_attn", help="Forcer/désactiver la flash attention (auto si omis)")
+
+
+def _engine_overrides(args) -> dict:
+    """Extrait les leviers explicites depuis les args parsés."""
+    return {
+        "n_gpu_layers": getattr(args, "n_gpu_layers", None),
+        "n_threads": getattr(args, "threads", None),
+        "flash_attn": getattr(args, "flash_attn", None),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="c3po",
@@ -324,7 +353,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="Lance une session de chat interactive")
     p_run.add_argument("model", nargs="?", default=None,
                        help="Nom ou chemin du modèle (auto si omis)")
-    p_run.add_argument("--ctx", type=int, default=4096, help="Taille du contexte (défaut: 4096)")
+    _add_engine_args(p_run)
     p_run.add_argument("--max-tokens", type=int, default=512, dest="max_tokens")
     p_run.add_argument("--temperature", type=float, default=0.7)
 
@@ -346,7 +375,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats = sub.add_parser("stats", help="Métadonnées d'un modèle + benchmark sur ce hardware")
     p_stats.add_argument("model", nargs="?", default=None,
                          help="Nom ou chemin du modèle (auto si omis)")
-    p_stats.add_argument("--ctx", type=int, default=4096, help="Taille du contexte (défaut: 4096)")
+    _add_engine_args(p_stats)
     p_stats.add_argument("--json", action="store_true", help="Sortie au format JSON")
 
     # serve
@@ -356,6 +385,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1",
                          help="Interface d'écoute (défaut: 127.0.0.1 ; 0.0.0.0 pour exposer sur le réseau)")
     p_serve.add_argument("--port", type=int, default=8000)
+    _add_engine_args(p_serve)
 
     # batch
     p_batch = sub.add_parser("batch", help="Traitement batch parallèle")
@@ -371,8 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Fichier JSON de sortie (ex: results.json)")
     p_batch.add_argument("--jobs", type=int, default=None,
                          help="Nombre de workers parallèles (auto si omis)")
-    p_batch.add_argument("--ctx", type=int, default=2048,
-                         help="Taille du contexte par worker (défaut: 2048)")
+    _add_engine_args(p_batch, ctx_default=2048)
 
     return parser
 

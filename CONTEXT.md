@@ -333,8 +333,21 @@ ils faussaient les quants). `c3po search` marque ces repos d'un `*` avec une lé
 prétend donc plus supporter la vision/audio. Vérifié : repos `Qwen2.5-VL` marqués `*` dans
 `search` ; avertissement affiché par `load`.
 
-Tous les points de la revue critique sont désormais traités (4 bugs + 5 points de
-conception : params CUDA, batch GPU, VRAM déterministe, marges centralisées, multimodal).
+**Leviers d'inférence exposés en CLI (point #13)** — le projet se vend sur « les leviers
+exposés, pas cachés », mais rien n'était réglable. `compute_params` calcule toujours
+l'auto, puis `params.apply_overrides()` (pur, testé) applique les overrides explicites
+par-dessus (None = auto conservé). `Engine` accepte `n_gpu_layers` / `n_threads` /
+`flash_attn`. Flags CLI communs via `_add_engine_args` : `--ctx`, `--n-gpu-layers`,
+`--threads`, `--flash-attn/--no-flash-attn`, sur `run`, `stats`, `serve` et `batch`.
+`serve` transmet au process serveur via l'environnement (`LLM_RUNTIME_CTX`,
+`LLM_RUNTIME_N_GPU_LAYERS`, …) ; `batch` via `_worker_init`. Vérifié :
+`c3po stats … --n-gpu-layers 10 --no-flash-attn --threads 4` reflète bien la config forcée.
+
+Bilan revue : 4 bugs + 6 points de conception traités (#5 params CUDA, #6 VRAM
+déterministe, #7 marges centralisées, #8 batch GPU, #9 multimodal, #13 leviers exposés).
+Restent ouverts, mineurs : #10 swap racy sous clients concurrents (mono-utilisateur en
+pratique) ; #11 benchmark `stats` sans warmup ; #12 couverture GPU/réseau manuelle (pas de
+CI GPU).
 
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 

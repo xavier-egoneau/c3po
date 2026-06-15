@@ -133,6 +133,25 @@ def _params_cuda(
     return InferenceParams(n_gpu_layers, threads, min_ctx, False)
 
 
+def apply_overrides(
+    params: InferenceParams,
+    n_gpu_layers: int | None = None,
+    n_threads: int | None = None,
+    use_flash_attn: bool | None = None,
+) -> InferenceParams:
+    """
+    Applique les leviers fournis explicitement par l'utilisateur par-dessus les
+    paramètres calculés. Un levier à None garde la valeur auto.
+    """
+    if n_gpu_layers is not None:
+        params.n_gpu_layers = n_gpu_layers
+    if n_threads is not None:
+        params.n_threads = n_threads
+    if use_flash_attn is not None:
+        params.use_flash_attn = use_flash_attn
+    return params
+
+
 def _params_cpu(profile: HardwareProfile, n_ctx: int) -> InferenceParams:
     """CPU only : on maximise les threads, on réduit le contexte."""
     return InferenceParams(

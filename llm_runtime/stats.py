@@ -18,7 +18,6 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from .hardware import detect_hardware
-from .params import compute_params
 
 
 # Prompt de benchmark : assez long pour solliciter la génération, déterministe (temp 0).
@@ -125,21 +124,30 @@ def _benchmark(engine) -> tuple[float | None, float | None, int]:
 # Point d'entrée public
 # ---------------------------------------------------------------------------
 
-def collect_stats(model_path: str | Path, n_ctx: int = 4096) -> ModelStats:
+def collect_stats(
+    model_path: str | Path,
+    n_ctx: int = 4096,
+    n_gpu_layers: int | None = None,
+    n_threads: int | None = None,
+    flash_attn: bool | None = None,
+) -> ModelStats:
     """
     Charge le modèle, lit ses métadonnées et lance un benchmark de génération.
+    Les leviers (n_gpu_layers/n_threads/flash_attn) sont transmis à l'Engine ;
+    les stats reflètent donc la configuration réellement appliquée.
     """
     from .engine import Engine
 
     model_path = Path(model_path)
-    size_gb = model_path.stat().st_size / (1024 ** 3)
 
     profile = detect_hardware()
-    params = compute_params(profile, n_ctx=n_ctx)
 
     vram_before = _gpu_mem_used_mb()
     t0 = time.time()
-    engine = Engine(model_path, n_ctx=n_ctx, profile=profile)
+    engine = Engine(
+        model_path, n_ctx=n_ctx, profile=profile,
+        n_gpu_layers=n_gpu_layers, n_threads=n_threads, flash_attn=flash_attn,
+    )
     load_time = time.time() - t0
     vram_after = _gpu_mem_used_mb()
     vram_used = (vram_after - vram_before) if (vram_before is not None and vram_after is not None) else None
@@ -170,10 +178,11 @@ def collect_stats(model_path: str | Path, n_ctx: int = 4096) -> ModelStats:
 
     ttft, gen_tps, gen_tokens = _benchmark(engine)
 
+    params = engine.params  # paramètres réellement appliqués (overrides inclus)
     return ModelStats(
         name=model_path.stem,
         path=str(model_path),
-        size_gb=round(size_gb, 2),
+        size_gb=round(engine.size_gb, 2),
         architecture=arch,
         quantization=_parse_quantization(model_path.name, metadata),
         n_params_b=n_params_b,

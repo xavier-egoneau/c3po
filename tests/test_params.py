@@ -1,5 +1,5 @@
 from llm_runtime.hardware import Backend, HardwareProfile
-from llm_runtime.params import compute_params
+from llm_runtime.params import compute_params, apply_overrides
 
 
 def _profile(backend: Backend, gpu_memory_gb: float, cpu_cores: int) -> HardwareProfile:
@@ -78,6 +78,27 @@ def test_compute_params_caps_ctx_at_training_context():
     params = compute_params(profile, n_ctx=4096, n_ctx_train=2048)
 
     assert params.n_ctx == 2048  # on ne demande pas plus que le modèle ne supporte
+
+
+def test_apply_overrides_replaces_only_provided_levers():
+    profile = _profile(Backend.CUDA, gpu_memory_gb=12.0, cpu_cores=16)
+    params = compute_params(profile, n_ctx=4096)  # auto : -1, 8 threads, flash True
+
+    apply_overrides(params, n_gpu_layers=10, use_flash_attn=False)
+
+    assert params.n_gpu_layers == 10        # forcé
+    assert params.use_flash_attn is False   # forcé
+    assert params.n_threads == 8            # inchangé (None → auto conservé)
+
+
+def test_apply_overrides_noop_when_all_none():
+    profile = _profile(Backend.CUDA, gpu_memory_gb=12.0, cpu_cores=16)
+    params = compute_params(profile, n_ctx=4096)
+    before = (params.n_gpu_layers, params.n_threads, params.use_flash_attn)
+
+    apply_overrides(params)
+
+    assert (params.n_gpu_layers, params.n_threads, params.use_flash_attn) == before
 
 
 def test_cpu_params_caps_context_and_disables_gpu():

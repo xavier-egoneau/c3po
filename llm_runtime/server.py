@@ -30,6 +30,20 @@ _model_path: Path | None = None
 _engine_lock = threading.Lock()
 
 
+def _engine_overrides_from_env() -> dict:
+    """Leviers d'inférence transmis par `c3po serve` via l'environnement."""
+    out: dict = {}
+    if "LLM_RUNTIME_CTX" in os.environ:
+        out["n_ctx"] = int(os.environ["LLM_RUNTIME_CTX"])
+    if "LLM_RUNTIME_N_GPU_LAYERS" in os.environ:
+        out["n_gpu_layers"] = int(os.environ["LLM_RUNTIME_N_GPU_LAYERS"])
+    if "LLM_RUNTIME_THREADS" in os.environ:
+        out["n_threads"] = int(os.environ["LLM_RUNTIME_THREADS"])
+    if "LLM_RUNTIME_FLASH_ATTN" in os.environ:
+        out["flash_attn"] = os.environ["LLM_RUNTIME_FLASH_ATTN"] == "1"
+    return out
+
+
 def get_engine(model_query: str | None = None) -> Engine:
     """
     Retourne le moteur servant `model_query`, en chargeant ou en remplaçant
@@ -64,7 +78,7 @@ def get_engine(model_query: str | None = None) -> Engine:
         gc.collect()
 
     _model_path = target_path
-    _engine = Engine(_model_path)
+    _engine = Engine(_model_path, **_engine_overrides_from_env())
     return _engine
 
 

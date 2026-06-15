@@ -57,7 +57,7 @@ class BatchSummary:
 # Worker (tourne dans un sous-process)
 # ---------------------------------------------------------------------------
 
-def _worker_init(model_path: str, n_ctx: int):
+def _worker_init(model_path: str, n_ctx: int, engine_overrides: dict | None = None):
     """
     Initialise le modèle dans le sous-process.
     Appelé une seule fois par worker — le modèle reste chargé en mémoire
@@ -65,7 +65,7 @@ def _worker_init(model_path: str, n_ctx: int):
     """
     global _engine
     from llm_runtime.engine import Engine
-    _engine = Engine(model_path, n_ctx=n_ctx)
+    _engine = Engine(model_path, n_ctx=n_ctx, **(engine_overrides or {}))
 
 
 def _worker_run(task: BatchTask) -> BatchResult:
@@ -205,6 +205,7 @@ def run_batch(
     jobs: int | None = None,
     n_ctx: int = 2048,
     verbose: bool = True,
+    engine_overrides: dict | None = None,
 ) -> BatchSummary:
     """
     Lance le batch en multi-process.
@@ -238,7 +239,7 @@ def run_batch(
     with ctx.Pool(
         processes=jobs,
         initializer=_worker_init,
-        initargs=(model_path, n_ctx),
+        initargs=(model_path, n_ctx, engine_overrides),
     ) as pool:
         for i, result in enumerate(pool.imap_unordered(_worker_run, tasks), start=1):
             results.append(result)
