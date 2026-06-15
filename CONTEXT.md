@@ -216,6 +216,63 @@ Note opérationnelle : `c3po serve` lance `uvicorn llm_runtime.server:app` comme
 **process séparé** (pas le même PID que `c3po`) — un `pkill -f "c3po serve"` ne le
 trouve pas ; viser `pkill -f uvicorn` ou Ctrl-C en avant-plan.
 
+## Phase 8 — `c3po stats`, `c3po load` (téléchargement HF), dossier modèles utilisateur ✅
+
+- **`c3po stats <modèle> [--ctx N] [--json]`** (`stats.py`, nouveau) : métadonnées GGUF
+  (architecture, quantization, nb de params si présent, contexte d'entraînement, couches,
+  embedding, vocab) + paramètres d'inférence appliqués + **benchmark réel** (temps de
+  chargement, time-to-first-token, tokens/s en génération, VRAM consommée). Le benchmark
+  charge le modèle et génère ~128 tokens à temp 0. Sur RTX 4070 / Qwen2.5-7B Q4_K_M :
+  chargement 1.6 s, TTFT 79 ms, **91.7 tok/s**, 4857 Mo de VRAM. (`tok/s` mesuré ici est
+  la génération pure, ≠ le débit wall-clock du batch qui inclut chargement + spawn.)
+  Mesure annexe : la génération décroît doucement avec le contexte (90→78 tok/s de ~vide
+  à 6k tokens, ~14 %), alors que le TTFT, lui, croît ~linéairement avec la taille du
+  prompt (82 ms → 1.7 s à 6k tokens, c'est le prefill).
+
+- **`c3po load <user>/<repo>[:QUANT]`** (`download.py`, nouveau) : téléchargement de GGUF
+  depuis Hugging Face en **HTTP brut (urllib stdlib, zéro dépendance, sans CLI ni token
+  requis)** — choix délibéré pour rester installable tel quel par n'importe quel
+  utilisateur de la lib (on n'a pas utilisé le CLI HF de la machine).
+  - Référence **explicite obligatoire** (`<user>/<repo>`), pas d'alias opaque : on sait ce
+    qu'on télécharge. `:QUANT` ou `--quant` pour forcer.
+  - Résolution via l'API publique `…/api/models/<repo>/tree/main?recursive=1` (tailles +
+    `lfs.oid` = SHA256). Regroupement par quant, **gestion des shards** (`-00001-of-…`).
+  - **Quant auto selon la VRAM** : plus grosse quant dont `taille × 1.15 ≤ gpu_memory_gb`
+    (= `best_model()` au moment du download) ; sinon la plus petite + avertissement.
+  - Téléchargement robuste : **reprise** (`Range:` + `.part` renommé à la fin),
+    **progression** (réécrite sur TTY, sparse tous les 10 % si capturée), **vérif SHA256**
+    contre l'oid LFS. `401` → message gated (honore `HF_TOKEN`/`HUGGING_FACE_HUB_TOKEN`
+    s'il existe, sans jamais l'exiger).
+  - Validé en réel : listing des 24 quants du repo bartowski Qwen2.5-7B (choix auto = Q8_0
+    pour 10.8 Go), download + reprise + intégrité OK sur le 0.5B.
+
+- **`c3po search <requête> [--limit N] [--all]`** (`download.py`) : découverte de modèles
+  GGUF sur HF éligibles au hardware courant. Recherche via `…/api/models?filter=gguf&
+  sort=downloads`, puis un appel `tree` par repo (parallélisés par un `ThreadPoolExecutor`,
+  ~1 s pour 15 repos) pour récupérer les tailles et calculer, via `best_fitting_quant()`,
+  la meilleure quant qui tient dans `gpu_memory_gb`. Filtre sur les éligibles par défaut
+  (`--all` pour tout voir, colonne `FIT`), tri éligibles d'abord puis par téléchargements.
+
+- **Correction du regroupement par quant** (`group_by_quant`, bénéficie à `load` ET
+  `search`) : on regroupe désormais par *base* (nom sans suffixe de shard) avant de mapper
+  vers une quant. Évite deux bugs vus en conditions réelles : (1) un repo offrant une même
+  quant en fichier unique **et** en shards (ex. Qwen2.5-Coder-7B) voyait ses tailles
+  additionnées (8.7 Go au lieu de 7.5) ; (2) sur les repos multimodaux, un `mmproj`
+  partageant un tag (`BF16`) était fusionné au modèle. Désormais : une représentation par
+  base (shards complets sinon fichier unique), et en cas de collision de quant entre deux
+  bases on garde la plus grosse (le vrai modèle, pas le mmproj).
+
+- **Dossier modèles utilisateur** (`models.py`) : `models_dir()` = `$C3PO_MODELS_DIR` ou
+  `~/.c3po/models` (le repo est une lib, les modèles sont du contenu utilisateur → hors du
+  repo). `list_models()`/`find_model()`/`best_model()` scannent par défaut `~/.c3po/models`
+  **+** `./models` (compat) **+** Ollama. `find_model` tolère désormais un suffixe `.gguf`
+  dans la requête.
+
+- **Tests** (47 au total) : `test_download.py` (parse_ref ; regroupement par quant : extraction,
+  fusion des shards, non-addition unique+shards, collision de quant ; choix de quant
+  auto/explicite/inconnue/fallback ; `best_fitting_quant`), `test_models.py` (suffixe `.gguf`).
+  Aucune dépendance ajoutée (urllib + concurrent.futures stdlib) → `requirements-lock.txt` inchangé.
+
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
 Le modèle **gemma4:e4b** via Ollama (blob `sha256-4c27e0f5...`, ~8.9 Go) est un GGUF valide

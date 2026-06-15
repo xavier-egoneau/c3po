@@ -5,12 +5,30 @@ qu'ils viennent d'Ollama ou de fichiers locaux.
 
 from __future__ import annotations
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 
 OLLAMA_MANIFESTS = Path.home() / ".ollama" / "models" / "manifests"
 OLLAMA_BLOBS     = Path.home() / ".ollama" / "models" / "blobs"
+
+
+def models_dir() -> Path:
+    """
+    Répertoire où c3po range les modèles téléchargés (contenu utilisateur,
+    hors de la lib). Surchargeable via C3PO_MODELS_DIR ; sinon ~/.c3po/models.
+    """
+    env = os.environ.get("C3PO_MODELS_DIR")
+    return Path(env) if env else Path.home() / ".c3po" / "models"
+
+
+def _default_local_dirs() -> list[Path]:
+    """
+    Répertoires scannés par défaut pour les GGUF locaux : le dossier utilisateur
+    (~/.c3po/models) plus ./models dans le répertoire courant (compat / pratique).
+    """
+    return [models_dir(), Path("models")]
 
 # Type MIME du blob qui contient les poids du modèle
 OLLAMA_MODEL_MEDIA_TYPE = "application/vnd.ollama.image.model"
@@ -127,8 +145,8 @@ def list_models(
     """
     models = _scan_ollama()
 
-    extra_dirs = [Path(d) for d in (local_dirs or [])]
-    models += _scan_local(extra_dirs)
+    dirs = _default_local_dirs() if local_dirs is None else [Path(d) for d in local_dirs]
+    models += _scan_local(dirs)
 
     # Déduplique par chemin
     seen = set()

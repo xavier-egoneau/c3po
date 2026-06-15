@@ -4,6 +4,8 @@ CLI c3po — interface en ligne de commande pour llm-runtime.
 Usage:
   c3po list
   c3po info
+  c3po search <query>
+  c3po load <user/repo>[:QUANT]
   c3po run <model>
   c3po stats <model>
   c3po serve [<model>] [--port 8000]
@@ -25,7 +27,7 @@ def cmd_list(args):
     from .hardware import detect_hardware
 
     profile = detect_hardware()
-    models = list_models(local_dirs=["models"])
+    models = list_models()
 
     if not models:
         print("Aucun modèle trouvé.")
@@ -176,6 +178,47 @@ def cmd_batch(args):
             print()
 
 
+def cmd_load(args):
+    """Télécharge un modèle GGUF depuis Hugging Face dans le dossier modèles."""
+    from .download import load
+
+    try:
+        load(args.ref, quant=args.quant, dest_dir=args.dir)
+    except ValueError as e:
+        print(str(e))
+    except Exception as e:
+        print(f"Échec du téléchargement : {e}")
+
+
+def cmd_search(args):
+    """Cherche sur Hugging Face les modèles GGUF qui tiennent dans le hardware courant."""
+    from .download import search_eligible
+    from .hardware import detect_hardware
+
+    profile = detect_hardware()
+    print(f"Recherche « {args.query} » sur Hugging Face… ({profile.gpu_memory_gb:.1f} Go dispo)")
+    try:
+        results = search_eligible(args.query, profile.gpu_memory_gb, limit=args.limit)
+    except Exception as e:
+        print(f"Échec de la recherche : {e}")
+        return
+
+    if not args.all:
+        results = [r for r in results if r.fits]
+
+    if not results:
+        print("Aucun modèle GGUF éligible trouvé. Essayez --all ou une autre requête.")
+        return
+
+    print(f"\n{'REPO':<55} {'QUANT':>10} {'TAILLE':>8}  {'FIT':>4}  {'DL':>8}")
+    print("─" * 95)
+    for r in results:
+        fit = "✓" if r.fits else "✗"
+        repo = r.repo if len(r.repo) <= 54 else "…" + r.repo[-53:]
+        print(f"{repo:<55} {r.quant:>10} {r.size_gb:>7.1f}G  {fit:>4}  {r.downloads:>8}")
+    print(f"\nInstaller : c3po load <repo>  (quant auto selon la VRAM)")
+
+
 def cmd_stats(args):
     """Affiche les stats d'un modèle : métadonnées GGUF + benchmark sur ce hardware."""
     from .stats import collect_stats, format_stats
@@ -237,7 +280,7 @@ def _resolve_model(query: str | None) -> Path | None:
 
     if query is None:
         profile = detect_hardware()
-        best = best_model(profile.gpu_memory_gb, local_dirs=["models"])
+        best = best_model(profile.gpu_memory_gb)
         if best is None:
             print("Aucun modèle disponible.")
             return None
@@ -245,7 +288,7 @@ def _resolve_model(query: str | None) -> Path | None:
         return best.path
 
     try:
-        return find_model(query, local_dirs=["models"]).path
+        return find_model(query).path
     except ValueError as e:
         print(str(e))
         return None
@@ -276,6 +319,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--ctx", type=int, default=4096, help="Taille du contexte (défaut: 4096)")
     p_run.add_argument("--max-tokens", type=int, default=512, dest="max_tokens")
     p_run.add_argument("--temperature", type=float, default=0.7)
+
+    # search
+    p_search = sub.add_parser("search", help="Cherche sur HF les modèles GGUF qui tiennent dans ton hardware")
+    p_search.add_argument("query", help="Terme de recherche (ex: qwen2.5, llama 3, mistral)")
+    p_search.add_argument("--limit", type=int, default=20, help="Nombre de repos à inspecter (défaut: 20)")
+    p_search.add_argument("--all", action="store_true", help="Afficher aussi les modèles qui ne tiennent pas")
+
+    # load
+    p_load = sub.add_parser("load", help="Télécharge un modèle GGUF depuis Hugging Face")
+    p_load.add_argument("ref", help="Repo HF, ex: bartowski/Qwen2.5-7B-Instruct-GGUF[:Q4_K_M]")
+    p_load.add_argument("--quant", default=None,
+                        help="Quantization à télécharger (ex: Q5_K_M). Auto selon la VRAM si omis.")
+    p_load.add_argument("--dir", default=None,
+                        help="Dossier de destination (défaut: ~/.c3po/models ou $C3PO_MODELS_DIR)")
 
     # stats
     p_stats = sub.add_parser("stats", help="Métadonnées d'un modèle + benchmark sur ce hardware")
@@ -315,9 +372,11 @@ def main():
     args = parser.parse_args()
 
     dispatch = {
-        "list":  cmd_list,
-        "info":  cmd_info,
-        "run":   cmd_run,
+        "list":   cmd_list,
+        "info":   cmd_info,
+        "search": cmd_search,
+        "load":   cmd_load,
+        "run":    cmd_run,
         "stats": cmd_stats,
         "serve": cmd_serve,
         "batch": cmd_batch,
