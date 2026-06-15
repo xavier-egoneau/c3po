@@ -1,3 +1,4 @@
+# Configuration du projet llm-runtime
 [project]
 name = "llm-runtime"
 version = "0.1.0"
