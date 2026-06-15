@@ -31,6 +31,9 @@ def compute_params(
     model_size_gb: float | None = None,
     n_layers: int | None = None,
     n_ctx_train: int | None = None,
+    n_embd: int | None = None,
+    n_heads: int | None = None,
+    n_kv_heads: int | None = None,
 ) -> InferenceParams:
     """
     Calcule les paramètres d'inférence optimaux selon le hardware.
@@ -41,6 +44,8 @@ def compute_params(
     n_layers      : nb de couches du modèle (en-tête GGUF) ; permet un offload partiel
                     chiffré quand le modèle ne tient pas entièrement.
     n_ctx_train   : contexte max à l'entraînement ; on ne demande jamais plus.
+    n_embd / n_heads / n_kv_heads : config d'attention (en-tête GGUF) → calcul exact du KV
+                    cache (gère la GQA) ; à défaut on retombe sur une heuristique.
     """
     # On ne demande jamais plus de contexte que le modèle n'en supporte.
     if n_ctx_train:
@@ -50,7 +55,7 @@ def compute_params(
         return _params_metal(profile, n_ctx)
 
     elif profile.backend == Backend.CUDA:
-        return _params_cuda(profile, n_ctx, model_size_gb, n_layers)
+        return _params_cuda(profile, n_ctx, model_size_gb, n_layers, n_embd, n_heads, n_kv_heads)
 
     else:  # CPU fallback
         return _params_cpu(profile, n_ctx)
@@ -83,13 +88,27 @@ _CUDA_RESERVE_GB = 0.8
 _WEIGHTS_MARGIN = 1.05
 
 
-def _kv_cache_gb(n_ctx: int, model_size_gb: float) -> float:
+def _kv_cache_gb(
+    n_ctx: int,
+    model_size_gb: float,
+    n_layers: int | None = None,
+    n_embd: int | None = None,
+    n_heads: int | None = None,
+    n_kv_heads: int | None = None,
+) -> float:
     """
-    Estimation grossière de la taille du KV cache. Sans la config d'attention
-    exacte (GQA, nb de têtes), on l'approxime proportionnellement à la taille du
-    modèle et au contexte. Volontairement un peu conservateur.
+    Taille du KV cache (fp16). Calcul exact si la config d'attention est connue :
+        KV = 2 (K+V) × n_layers × n_ctx × (n_kv_heads × head_dim) × 2 octets
+    avec head_dim = n_embd / n_heads. Gère la GQA (n_kv_heads < n_heads).
+    À défaut, on retombe sur une heuristique proportionnelle à la taille du modèle.
     """
-    return (n_ctx / 4096) * model_size_gb * 0.20
+    if n_layers and n_embd and n_heads:
+        kv_heads = n_kv_heads or n_heads          # MHA si head_count_kv absent
+        head_dim = n_embd / n_heads
+        kv_dim = kv_heads * head_dim
+        kv_bytes = 2 * n_layers * n_ctx * kv_dim * 2  # K+V, fp16
+        return kv_bytes / 1024**3
+    return (n_ctx / 4096) * model_size_gb * 0.20      # heuristique de repli
 
 
 def _params_cuda(
@@ -97,6 +116,9 @@ def _params_cuda(
     n_ctx: int,
     model_size_gb: float | None,
     n_layers: int | None,
+    n_embd: int | None = None,
+    n_heads: int | None = None,
+    n_kv_heads: int | None = None,
 ) -> InferenceParams:
     """
     Nvidia : VRAM dédiée et limitée. On vise tout sur GPU quand ça tient, on réduit
@@ -113,18 +135,21 @@ def _params_cuda(
     budget = max(0.0, profile.gpu_memory_gb - _CUDA_RESERVE_GB)
     weights = model_size_gb * _WEIGHTS_MARGIN
 
+    def kv(ctx: int) -> float:
+        return _kv_cache_gb(ctx, model_size_gb, n_layers, n_embd, n_heads, n_kv_heads)
+
     # 1) Tout tient au contexte demandé → toutes les couches sur GPU.
-    if weights + _kv_cache_gb(n_ctx, model_size_gb) <= budget:
+    if weights + kv(n_ctx) <= budget:
         return InferenceParams(-1, threads, n_ctx, n_ctx > 2048)
 
     # 2) Réduire le contexte jusqu'à ce que poids + KV tiennent.
     for ctx in (3072, 2048, 1536, 1024, 512):
-        if ctx < n_ctx and weights + _kv_cache_gb(ctx, model_size_gb) <= budget:
+        if ctx < n_ctx and weights + kv(ctx) <= budget:
             return InferenceParams(-1, threads, ctx, ctx > 2048)
 
     # 3) Même au minimum les poids ne tiennent pas → offload partiel chiffré.
     min_ctx = 512
-    avail_for_weights = max(0.0, budget - _kv_cache_gb(min_ctx, model_size_gb))
+    avail_for_weights = max(0.0, budget - kv(min_ctx))
     if n_layers and weights > 0:
         fraction = avail_for_weights / weights
         n_gpu_layers = max(0, min(n_layers, int(n_layers * fraction)))

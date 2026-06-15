@@ -1,5 +1,5 @@
 from llm_runtime.hardware import Backend, HardwareProfile
-from llm_runtime.params import compute_params, apply_overrides
+from llm_runtime.params import compute_params, apply_overrides, _kv_cache_gb
 
 
 def _profile(backend: Backend, gpu_memory_gb: float, cpu_cores: int) -> HardwareProfile:
@@ -78,6 +78,38 @@ def test_compute_params_caps_ctx_at_training_context():
     params = compute_params(profile, n_ctx=4096, n_ctx_train=2048)
 
     assert params.n_ctx == 2048  # on ne demande pas plus que le modèle ne supporte
+
+
+def test_kv_cache_exact_accounts_for_gqa():
+    # Qwen2.5-7B : 28 couches, embd 3584, 28 têtes mais 4 têtes KV (GQA).
+    # KV @4096 ≈ 2×28×4096×(4×128)×2 octets ≈ 0.22 Go.
+    kv = _kv_cache_gb(4096, model_size_gb=4.4, n_layers=28, n_embd=3584,
+                      n_heads=28, n_kv_heads=4)
+    assert 0.20 < kv < 0.25
+
+    # Sans GQA (autant de têtes KV que de têtes) → ~7× plus gros.
+    kv_mha = _kv_cache_gb(4096, model_size_gb=4.4, n_layers=28, n_embd=3584,
+                          n_heads=28, n_kv_heads=28)
+    assert kv_mha > kv * 6
+
+
+def test_kv_cache_falls_back_to_heuristic_without_attention_config():
+    kv = _kv_cache_gb(4096, model_size_gb=5.0, n_layers=None, n_embd=None,
+                      n_heads=None, n_kv_heads=None)
+    assert kv == (4096 / 4096) * 5.0 * 0.20
+
+
+def test_cuda_exact_kv_keeps_ctx_where_heuristic_would_reduce():
+    # budget = 5.8 - 0.8 = 5.0 ; poids 4.4×1.05 = 4.62.
+    # KV exact @4096 ≈ 0.22 → 4.84 ≤ 5.0 : tient. Heuristique 0.88 → 5.5 > 5.0 : réduirait.
+    profile = _profile(Backend.CUDA, gpu_memory_gb=5.8, cpu_cores=16)
+
+    exact = compute_params(profile, n_ctx=4096, model_size_gb=4.4, n_layers=28,
+                           n_embd=3584, n_heads=28, n_kv_heads=4)
+    heuristic = compute_params(profile, n_ctx=4096, model_size_gb=4.4, n_layers=28)
+
+    assert exact.n_ctx == 4096        # KV exact (petit) → contexte plein conservé
+    assert heuristic.n_ctx < 4096     # heuristique (surévaluée) → contexte réduit
 
 
 def test_apply_overrides_replaces_only_provided_levers():

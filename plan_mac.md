@@ -49,8 +49,6 @@ le PC CUDA (commits jusqu'à `963e88b`). Cocher au fur et à mesure.
       (à adapter selon le chemin réel d'install pip sur le Mac)
 
 ## 6. Points connus (pas des bugs — pour mémoire)
-- KV cache estimé approximativement dans `_params_cuda` (sans config GQA) — n'affecte pas
-  Metal (n_gpu_layers = -1).
 - Vision/audio non supportée (mmproj non chargé) — modèles multimodaux marqués/avertis.
 - Gemma 3n non chargeable (limite `llama-cpp-python` 0.3.29).
 - #12 de la revue : pas de CI GPU — la validation Metal reste manuelle (cette liste).

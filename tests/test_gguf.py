@@ -41,6 +41,8 @@ def test_read_metadata_extracts_wanted_keys(tmp_path):
         _kv_u32(b"qwen2.block_count", 28),
         _kv_u32(b"qwen2.context_length", 32768),
         _kv_u32(b"qwen2.embedding_length", 3584),
+        _kv_u32(b"qwen2.attention.head_count", 28),
+        _kv_u32(b"qwen2.attention.head_count_kv", 4),
     ])
     path = tmp_path / "tiny.gguf"
     path.write_bytes(data)
@@ -49,6 +51,9 @@ def test_read_metadata_extracts_wanted_keys(tmp_path):
     assert meta["general.architecture"] == "qwen2"
     assert meta["qwen2.block_count"] == 28
     assert meta["qwen2.context_length"] == 32768
+    # head_count et head_count_kv ne doivent pas se confondre
+    assert meta["qwen2.attention.head_count"] == 28
+    assert meta["qwen2.attention.head_count_kv"] == 4
     # le tableau sauté n'est pas matérialisé
     assert "tokenizer.ggml.tokens" not in meta
 
@@ -59,12 +64,17 @@ def test_model_shape_maps_dimensions(tmp_path):
         _kv_u32(b"llama.block_count", 32),
         _kv_u32(b"llama.context_length", 8192),
         _kv_u32(b"llama.embedding_length", 4096),
+        _kv_u32(b"llama.attention.head_count", 32),
+        _kv_u32(b"llama.attention.head_count_kv", 8),
     ])
     path = tmp_path / "m.gguf"
     path.write_bytes(data)
 
     shape = model_shape(path)
-    assert shape == {"arch": "llama", "n_layers": 32, "n_ctx_train": 8192, "n_embd": 4096}
+    assert shape == {
+        "arch": "llama", "n_layers": 32, "n_ctx_train": 8192,
+        "n_embd": 4096, "n_heads": 32, "n_kv_heads": 8,
+    }
 
 
 def test_model_shape_returns_none_on_non_gguf(tmp_path):
@@ -72,4 +82,7 @@ def test_model_shape_returns_none_on_non_gguf(tmp_path):
     path.write_bytes(b"not a gguf file at all")
 
     shape = model_shape(path)
-    assert shape == {"arch": None, "n_layers": None, "n_ctx_train": None, "n_embd": None}
+    assert shape == {
+        "arch": None, "n_layers": None, "n_ctx_train": None,
+        "n_embd": None, "n_heads": None, "n_kv_heads": None,
+    }

@@ -305,8 +305,16 @@ comportement CUDA :
   au lieu de tenter `-1` et faire OOM (llama.cpp ne fait pas de spill automatique).
 Vérifié : 7B sur 4070 → -1/4096 ; 7B simulé sur 6 Go → -1/2048 ; 14B (8.5 Go) sur 4070 →
 -1/2048 (tient au lieu d'OOM à 4096). Le chemin sans info modèle reste inchangé
-(rétrocompat des tests). KV cache encore approximé (×0.20 × taille × ctx/4096) faute de
-config d'attention exacte (GQA).
+(rétrocompat des tests).
+
+**KV cache exact (suite, remplace l'heuristique ×0.20).** `gguf.model_shape` lit aussi
+`attention.head_count` et `attention.head_count_kv`. `_kv_cache_gb` calcule alors la taille
+réelle : `2 (K+V) × n_layers × n_ctx × (n_kv_heads × n_embd/n_heads) × 2 octets (fp16)`,
+ce qui prend en compte la **GQA**. Repli sur l'heuristique si la config est absente.
+Mesure sur Qwen2.5-7B (GQA 28→4 têtes KV) : KV @4096 = 0.22 Go (vs 0.88 heuristique),
+@32768 = 1.75 Go (vs 7.04) — l'ancienne estimation était ~4× trop conservatrice et réduisait
+le contexte sans raison sur les cartes justes. Hypothèse : KV en fp16 (défaut llama.cpp) ;
+un KV quantifié changerait les octets/élément.
 
 **Batch limité à 1 worker sur CUDA (point #8 de la revue)** : `optimal_jobs()` retourne
 désormais `1` quand le backend est CUDA. Sur une carte Nvidia la VRAM est dédiée et le GPU

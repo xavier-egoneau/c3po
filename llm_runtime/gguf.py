@@ -22,8 +22,15 @@ _SCALAR_FMT = {
 }
 _SCALAR_SIZE = {t: struct.calcsize(f) for t, f in _SCALAR_FMT.items()}
 
-# Clés qu'on cherche (suffixe pour être indépendant du préfixe d'architecture)
-_WANTED_SUFFIXES = (".block_count", ".context_length", ".embedding_length")
+# Clés qu'on cherche (suffixe pour être indépendant du préfixe d'architecture).
+# head_count_kv doit précéder head_count : endswith s'arrête au premier match.
+_WANTED_SUFFIXES = (
+    ".block_count",
+    ".context_length",
+    ".embedding_length",
+    ".attention.head_count_kv",
+    ".attention.head_count",
+)
 
 
 class _Reader:
@@ -97,19 +104,26 @@ def read_metadata(path: str | Path) -> dict:
         return meta
 
 
+_EMPTY_SHAPE = {
+    "arch": None, "n_layers": None, "n_ctx_train": None,
+    "n_embd": None, "n_heads": None, "n_kv_heads": None,
+}
+
+
 def model_shape(path: str | Path) -> dict:
     """
     Dimensions exploitables d'un modèle GGUF, ou des None si illisibles.
-    Clés : arch, n_layers, n_ctx_train, n_embd.
+    Clés : arch, n_layers, n_ctx_train, n_embd, n_heads, n_kv_heads.
     """
     try:
         meta = read_metadata(path)
     except (ValueError, OSError):
-        return {"arch": None, "n_layers": None, "n_ctx_train": None, "n_embd": None}
+        return dict(_EMPTY_SHAPE)
 
     arch = meta.get("general.architecture")
 
     def by_suffix(suffix: str):
+        # endswith distingue déjà head_count de head_count_kv (suffixe exact)
         for k, v in meta.items():
             if k.endswith(suffix):
                 return v
@@ -120,4 +134,6 @@ def model_shape(path: str | Path) -> dict:
         "n_layers": by_suffix(".block_count"),
         "n_ctx_train": by_suffix(".context_length"),
         "n_embd": by_suffix(".embedding_length"),
+        "n_heads": by_suffix(".attention.head_count"),
+        "n_kv_heads": by_suffix(".attention.head_count_kv"),
     }

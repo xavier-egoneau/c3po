@@ -43,6 +43,9 @@ class Engine:
             model_size_gb=self.size_gb,
             n_layers=shape["n_layers"],
             n_ctx_train=shape["n_ctx_train"],
+            n_embd=shape["n_embd"],
+            n_heads=shape["n_heads"],
+            n_kv_heads=shape["n_kv_heads"],
         )
         # Leviers explicites (CLI) par-dessus les valeurs calculées.
         apply_overrides(
