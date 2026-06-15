@@ -54,7 +54,7 @@ class Engine:
             n_gpu_layers=self.params.n_gpu_layers,
             n_threads=self.params.n_threads,
             n_ctx=self.params.n_ctx,
-            use_flash_attn=self.params.use_flash_attn,
+            flash_attn=self.params.use_flash_attn,
             verbose=False,
         )
 

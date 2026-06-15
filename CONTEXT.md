@@ -273,6 +273,31 @@ trouve pas ; viser `pkill -f uvicorn` ou Ctrl-C en avant-plan.
   auto/explicite/inconnue/fallback ; `best_fitting_quant`), `test_models.py` (suffixe `.gguf`).
   Aucune dépendance ajoutée (urllib + concurrent.futures stdlib) → `requirements-lock.txt` inchangé.
 
+## Phase 9 — Corrections post-revue ✅
+
+Suite à une revue critique du projet, correction des bugs concrets identifiés :
+
+- **Flash attention jamais activée** (`engine.py`) : on passait `use_flash_attn=…` à
+  `llama_cpp.Llama`, mais le vrai paramètre est `flash_attn`. Comme `Llama` accepte
+  `**kwargs`, l'argument était silencieusement ignoré → toute la logique
+  `params.use_flash_attn` était morte. Corrigé en `flash_attn=…`. Vérifié :
+  `llama_context: flash_attn = enabled` au chargement.
+- **`server.py` ignorait `~/.c3po/models`** : les appels utilisaient encore
+  `local_dirs=["models"]` (régression Phase 8). Remplacés par les défauts
+  (`find_model`/`list_models`/`best_model` sans `local_dirs`). Vérifié : `/v1/models`
+  liste bien les modèles de `~/.c3po/models`.
+- **VRAM codée en dur dans le serveur** : `best_model(available_memory_gb=12.0)` →
+  `best_model(detect_hardware().gpu_memory_gb)`.
+- **Serveur exposé sur `0.0.0.0` sans auth** : défaut passé à `127.0.0.1`, avec un
+  flag `--host` pour ouvrir explicitement sur le réseau (avertissement affiché si
+  `0.0.0.0`).
+
+Points de la revue restant ouverts (non bugs, décisions de conception) : `_params_cuda`
+encore rudimentaire (n_gpu_layers magique, n_ctx non réduit selon la VRAM) ; batch
+multi-process discutable sur GPU mono-carte ; `gpu_memory_gb` = VRAM libre donc non
+déterministe ; marges mémoire (×1.1 / ×1.15) éparpillées ; `search`/`load` trompeurs sur
+les modèles multimodaux (mmproj non téléchargé).
+
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
 Le modèle **gemma4:e4b** via Ollama (blob `sha256-4c27e0f5...`, ~8.9 Go) est un GGUF valide

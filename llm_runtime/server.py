@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .engine import Engine
+from .hardware import detect_hardware
 from .models import find_model, list_models, best_model
 
 
@@ -42,7 +43,7 @@ def get_engine(model_query: str | None = None) -> Engine:
     global _engine, _model_path
 
     if model_query is not None:
-        target_path = find_model(model_query, local_dirs=["models"]).path
+        target_path = find_model(model_query).path
     elif _engine is not None:
         return _engine
     else:
@@ -50,9 +51,9 @@ def get_engine(model_query: str | None = None) -> Engine:
         if model_path:
             target_path = Path(model_path)
         else:
-            info = best_model(available_memory_gb=12.0, local_dirs=["models"])
+            info = best_model(detect_hardware().gpu_memory_gb)
             if info is None:
-                raise RuntimeError("Aucun modèle disponible (ni Ollama, ni ./models)")
+                raise RuntimeError("Aucun modèle disponible (ni Ollama, ni ~/.c3po/models, ni ./models)")
             target_path = info.path
 
     if _engine is not None and target_path == _model_path:
@@ -82,7 +83,7 @@ class ChatCompletionRequest(BaseModel):
 
 @app.get("/v1/models")
 def get_models():
-    models = list_models(local_dirs=["models"])
+    models = list_models()
     return {
         "object": "list",
         "data": [

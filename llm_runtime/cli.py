@@ -250,7 +250,9 @@ def cmd_serve(args):
     if model_path:
         env["LLM_RUNTIME_MODEL"] = str(model_path)
 
-    print(f"Démarrage du serveur sur http://localhost:{args.port}")
+    print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
+    if args.host == "0.0.0.0":
+        print("⚠️  Écoute sur toutes les interfaces réseau, sans authentification.")
     if model_path:
         print(f"Modèle : {model_path.name}")
     else:
@@ -260,7 +262,7 @@ def cmd_serve(args):
     cmd = [
         sys.executable, "-m", "uvicorn",
         "llm_runtime.server:app",
-        "--host", "0.0.0.0",
+        "--host", args.host,
         "--port", str(args.port),
     ]
 
@@ -345,6 +347,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="Lance le serveur HTTP compatible OpenAI")
     p_serve.add_argument("model", nargs="?", default=None,
                          help="Nom ou chemin du modèle (auto si omis)")
+    p_serve.add_argument("--host", default="127.0.0.1",
+                         help="Interface d'écoute (défaut: 127.0.0.1 ; 0.0.0.0 pour exposer sur le réseau)")
     p_serve.add_argument("--port", type=int, default=8000)
 
     # batch
