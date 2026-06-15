@@ -411,6 +411,25 @@ successivement dans le **même process** sur CUDA crashe (`ggml_cuda_error` dans
 (testé seulement sur Metal jusqu'ici). À vérifier/fixer plus tard (libération explicite du
 backend, ou modèle par process). Chaque commande chargeant un seul modèle n'est pas affectée.
 
+## Phase 12 — `max_tokens` auto (fin naturelle au lieu d'un cap fixe) ✅
+
+Symptôme observé : sur du code long (génération d'un WYSIWYG), `c3po run` coupait la sortie
+en plein milieu. Cause : `--max-tokens` plafonnait à **512** par défaut — pas la VRAM (un OOM
+crashe le process ; là ça s'arrêtait proprement = signature d'un cap de tokens atteint).
+
+`llama-cpp-python` traite `max_tokens=None` (ou ≤0) comme « génère jusqu'à l'EOS ou la limite
+de contexte » (vérifié dans la doc). On bascule donc le **défaut sur None** :
+- `Engine.chat`/`generate` : `max_tokens: int | None = None`.
+- `c3po run` : `--max-tokens` défaut None (le modèle s'arrête quand sa réponse est finie).
+- `server.py` : `ChatCompletionRequest.max_tokens` défaut None (aligné sur l'API OpenAI).
+- `batch` reste à 512 (sortie bornée volontaire pour le débit / la prévisibilité).
+Vérifié : `chat(max_tokens=None)` → `finish_reason: "stop"` (arrêt naturel à l'EOS).
+
+Note : test de chargement concurrent qui a échoué proprement → le **garde-fou mémoire**
+(`check_memory_pressure`) a correctement détecté qu'un 14B (7.5 Go) + un 7B (4.4 Go) dépassent
+les 11 Go de la 4070 et a averti. Confirme qu'il faut **un seul gros modèle à la fois** sur
+cette carte.
+
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
 Le modèle **gemma4:e4b** via Ollama (blob `sha256-4c27e0f5...`, ~8.9 Go) est un GGUF valide

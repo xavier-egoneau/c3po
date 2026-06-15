@@ -371,7 +371,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("model", nargs="?", default=None,
                        help="Nom ou chemin du modèle (auto si omis)")
     _add_engine_args(p_run)
-    p_run.add_argument("--max-tokens", type=int, default=512, dest="max_tokens")
+    p_run.add_argument("--max-tokens", type=int, default=None, dest="max_tokens",
+                       help="Limite de tokens générés (auto si omis : jusqu'à la fin de la "
+                            "réponse ou la limite de contexte)")
     p_run.add_argument("--temperature", type=float, default=0.7)
 
     # search

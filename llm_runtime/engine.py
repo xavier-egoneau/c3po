@@ -112,13 +112,14 @@ class Engine:
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 512,
+        max_tokens: int | None = None,
         temperature: float = 0.7,
         stream: bool = False,
     ) -> str | Iterator[str]:
         """
         Génère du texte à partir d'un prompt.
 
+        max_tokens=None → génère jusqu'à l'EOS (fin naturelle) ou la limite de contexte.
         stream=True  → retourne un itérateur de tokens au fil de l'eau
         stream=False → retourne le texte complet (défaut)
         """
@@ -127,7 +128,7 @@ class Engine:
         else:
             return self._complete(prompt, max_tokens, temperature)
 
-    def _complete(self, prompt: str, max_tokens: int, temperature: float) -> str:
+    def _complete(self, prompt: str, max_tokens: int | None, temperature: float) -> str:
         result = self._llm(
             prompt,
             max_tokens=max_tokens,
@@ -137,7 +138,7 @@ class Engine:
         return result["choices"][0]["text"]
 
     def _stream(
-        self, prompt: str, max_tokens: int, temperature: float
+        self, prompt: str, max_tokens: int | None, temperature: float
     ) -> Iterator[str]:
         for chunk in self._llm(
             prompt,
@@ -153,7 +154,7 @@ class Engine:
     def chat(
         self,
         messages: list[dict[str, Any]],
-        max_tokens: int = 512,
+        max_tokens: int | None = None,
         temperature: float = 0.7,
         stream: bool = False,
     ) -> dict[str, Any] | Iterator[dict[str, Any]]:
@@ -161,6 +162,7 @@ class Engine:
         Génère une réponse de chat au format OpenAI à partir d'une liste
         de messages ({"role": ..., "content": ...}).
 
+        max_tokens=None → génère jusqu'à l'EOS (fin naturelle) ou la limite de contexte.
         Le chat template embarqué dans le GGUF est utilisé automatiquement.
         """
         return self._llm.create_chat_completion(

@@ -17,7 +17,7 @@ def test_chat_completion_request_defaults():
     request = ChatCompletionRequest(messages=[{"role": "user", "content": "salut"}])
 
     assert request.model is None
-    assert request.max_tokens == 512
+    assert request.max_tokens is None  # None → jusqu'à l'EOS / la limite de contexte
     assert request.temperature == 0.7
     assert request.stream is False
     assert request.messages[0].role == "user"

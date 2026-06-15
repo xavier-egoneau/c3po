@@ -102,7 +102,7 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     model: Optional[str] = None
     messages: list[ChatMessage]
-    max_tokens: int = 512
+    max_tokens: Optional[int] = None  # None → jusqu'à l'EOS / la limite de contexte
     temperature: float = 0.7
     stream: bool = False
 
