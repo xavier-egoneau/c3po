@@ -220,8 +220,14 @@ def run_batch(
     t0 = time.time()
     results: list[BatchResult] = []
 
-    # multiprocessing.pool avec initializer : chaque worker charge le modèle une fois
-    with mp.Pool(
+    # multiprocessing.pool avec initializer : chaque worker charge le modèle une fois.
+    # On force le contexte "spawn" : avec "fork" (défaut Linux), les workers héritent
+    # du contexte CUDA déjà initialisé dans le parent (par _validate_model / le backend
+    # ggml), ce qui est incompatible avec CUDA et provoque un segfault des workers.
+    # "spawn" démarre des process neufs qui initialisent CUDA proprement — c'est aussi
+    # le défaut macOS, donc le comportement devient identique sur les deux plateformes.
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(
         processes=jobs,
         initializer=_worker_init,
         initargs=(model_path, n_ctx),

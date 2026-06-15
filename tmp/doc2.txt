@@ -1,11 +1,1 @@
-Les tardigrades (ou « oursons d’eau ») sont des micro-animaux invertébrés du phylum Tardigrada, mesurant entre 0,1 et 1,5 mm, et comptant plus de 1 300 espèces répertoriées.  Présents sur Terre depuis près de 500 millions d’années, ils sont considérés comme les organismes les plus résistants de la planète grâce à leur capacité à entrer en cryptobiose (ou état de « tun »). 
-
-Caractéristiques et Résistance
-Survie extrême : En état de dormance, ils tolèrent des températures de −272 °C à +150 °C, le vide spatial, des pressions jusqu’à 6 000 bars et des radiations ionisantes (1 100 fois la dose létale pour l’humain).
-Mécanisme : Ils déshydratent leur corps à plus de 99 %, remplaçant l’eau cellulaire par du tréhalose et produisant des protéines protectrices (comme la Dsup) qui préservent l’ADN. 
-Longévité : Leur vie active dure entre 12 et 30 mois selon l’espèce, mais ils peuvent rester en cryptobiose pendant des décennies ; le record est de 30,5 ans (réveil en 2016) et potentiellement plus de 2 000 ans pour des spécimens trouvés dans la banquise groenlandaise.
-Habitat et Biologie
-Environnement : Ils sont cosmopolites, vivant dans la mousse, les lichens, le sable et les sédiments, depuis les sommets de l’Himalaya (+6 000 m) jusqu’aux abysses océaniques (−4 000 m). 
-Physiologie : Ils possèdent un corps segmenté protégé par une cuticule et huit pattes griffues.  Leur déplacement est lent en raison de l’absence de muscles transverses.
-Régime : Ils se nourrissent principalement de cellules végétales (diatomées), d’algues ou de nématodes, percés grâce à un stylet buccal ; certaines espèces sont cannibales. 
-Bien que souvent qualifiés d’« indestructibles », les tardigrades ne sont pas invincibles ; une exposition prolongée à de l’eau chaude (82,7 °C) ou à des pressions extrêmes très localisées peut les tuer même en état de cryptobiose. 
+Paris est la capitale de la France et compte plus de deux millions d'habitants.

@@ -74,6 +74,17 @@ def test_find_model_by_substring(tmp_path):
     assert info.name == "qwen2.5-7b"
 
 
+def test_find_model_tolerates_gguf_suffix(tmp_path):
+    # L'utilisateur tape le nom complet avec extension, mais les noms indexés
+    # sont des stems sans extension — le suffixe .gguf doit être ignoré.
+    _make_gguf(tmp_path, "qwen2.5-7b.gguf", size_mb=10)
+
+    with patch("llm_runtime.models._scan_ollama", return_value=[]):
+        info = find_model("qwen2.5-7b.gguf", local_dirs=[tmp_path])
+
+    assert info.name == "qwen2.5-7b"
+
+
 def test_find_model_ambiguous_raises(tmp_path):
     _make_gguf(tmp_path, "qwen2.5-7b.gguf", size_mb=10)
     _make_gguf(tmp_path, "qwen2.5-14b.gguf", size_mb=20)

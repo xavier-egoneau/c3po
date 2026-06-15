@@ -5,6 +5,7 @@ Usage:
   c3po list
   c3po info
   c3po run <model>
+  c3po stats <model>
   c3po serve [<model>] [--port 8000]
 """
 
@@ -175,6 +176,26 @@ def cmd_batch(args):
             print()
 
 
+def cmd_stats(args):
+    """Affiche les stats d'un modèle : métadonnées GGUF + benchmark sur ce hardware."""
+    from .stats import collect_stats, format_stats
+
+    model_path = _resolve_model(args.model)
+    if model_path is None:
+        return
+
+    print(f"Chargement et benchmark de {model_path.name}… (quelques secondes)")
+    stats = collect_stats(model_path, n_ctx=args.ctx)
+
+    if args.json:
+        import json
+        from dataclasses import asdict
+        print(json.dumps(asdict(stats), ensure_ascii=False, indent=2))
+    else:
+        print()
+        print(format_stats(stats))
+
+
 def cmd_serve(args):
     """Lance le serveur HTTP compatible OpenAI."""
     import os
@@ -256,6 +277,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--max-tokens", type=int, default=512, dest="max_tokens")
     p_run.add_argument("--temperature", type=float, default=0.7)
 
+    # stats
+    p_stats = sub.add_parser("stats", help="Métadonnées d'un modèle + benchmark sur ce hardware")
+    p_stats.add_argument("model", nargs="?", default=None,
+                         help="Nom ou chemin du modèle (auto si omis)")
+    p_stats.add_argument("--ctx", type=int, default=4096, help="Taille du contexte (défaut: 4096)")
+    p_stats.add_argument("--json", action="store_true", help="Sortie au format JSON")
+
     # serve
     p_serve = sub.add_parser("serve", help="Lance le serveur HTTP compatible OpenAI")
     p_serve.add_argument("model", nargs="?", default=None,
@@ -290,6 +318,7 @@ def main():
         "list":  cmd_list,
         "info":  cmd_info,
         "run":   cmd_run,
+        "stats": cmd_stats,
         "serve": cmd_serve,
         "batch": cmd_batch,
     }

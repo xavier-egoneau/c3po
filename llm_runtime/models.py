@@ -156,8 +156,14 @@ def find_model(
         size_gb = p.stat().st_size / (1024 ** 3)
         return ModelInfo(name=p.stem, path=p, size_gb=size_gb, source="local")
 
+    # On tolère un suffixe .gguf dans la requête : les noms indexés sont des stems
+    # (sans extension), donc "modele.gguf" doit matcher le modèle "modele".
+    needle = query.lower()
+    if needle.endswith(".gguf"):
+        needle = needle[: -len(".gguf")]
+
     models = list_models(local_dirs)
-    matches = [m for m in models if query.lower() in m.name.lower()]
+    matches = [m for m in models if needle in m.name.lower()]
 
     if not matches:
         raise ValueError(

@@ -174,17 +174,47 @@ Suite à une revue critique du projet (8 points), correctifs appliqués :
   - `test_server.py` — `get_engine()` avec `Engine` mocké (premier chargement,
     cache hit, swap, `ValueError` sur modèle inconnu)
 
-### Validation Machine 2 (CUDA) — à faire
+### Validation Machine 2 (CUDA) — ✅ faite (15/06/2026, RTX 4070, Ubuntu 24.04)
 
-Le chemin CUDA (`_detect_nvidia`, `_params_cuda`) n'est couvert que par des tests
-avec `nvidia-smi` mocké. À valider sur la RTX 4070 :
+Environnement de la Machine 2 :
+- Ubuntu 24.04, Python 3.11.11 (pyenv), driver Nvidia 580 / CUDA 13.0, RTX 4070 12 Go.
+- **Pas de wheel CUDA précompilée utilisable** : l'index `abetlen.github.io/.../whl/cuXXX`
+  plafonne à `llama-cpp-python` 0.2.66 (avril 2024, Linux/py311), trop ancien pour
+  Qwen2.5. → **compilation depuis les sources obligatoire** :
+  ```bash
+  sudo apt install -y nvidia-cuda-toolkit        # nvcc 12.0 (multiverse), suffit
+  python3 -m pip install cmake                   # cmake absent par défaut
+  CMAKE_ARGS="-DGGML_CUDA=on" FORCE_CMAKE=1 \
+      python3 -m pip install --no-cache-dir llama-cpp-python
+  ```
+  Build OK en ~4 min → `llama-cpp-python 0.3.29` (même version que le Mac),
+  `llama_supports_gpu_offload() == True`, GPU détecté à l'import.
 
-- [ ] `c3po info` → vérifier `Backend: cuda`, VRAM détectée correcte (~12 Go),
-      `n_gpu_layers` cohérent avec `_params_cuda` (-1 si VRAM ≥ 8 Go)
-- [ ] `c3po run <modèle>` → chat interactif fonctionne, pas d'erreur CUDA
-- [ ] `c3po batch <modèle> --input ... --ctx 4096 --output results.json` →
-      `optimal_jobs()` retourne un nombre de workers cohérent avec la VRAM dispo
-- [ ] `c3po serve` + requêtes `/v1/chat/completions` (streaming + non-streaming)
+Checklist :
+- [x] `c3po info` → `Backend: cuda`, `NVIDIA GeForce RTX 4070`, GPU memory 11.0 Go
+      (VRAM libre), `n_gpu_layers: toutes couches` (-1), flash_attn True. Conforme à
+      `_params_cuda`.
+- [x] `c3po list` → modèle local listé, `FIT ✓`. (chat interactif `c3po run` non
+      déroulé en TTY, mais `serve`/`batch` exercent le même chemin `Engine.chat`.)
+- [x] `c3po batch qwen --ctx 4096` → 3/3 succès, 2.3s, **24.3 tok/s** (~2× le M4),
+      1 worker (cohérent : `model*1.15 + kv ≈ 6 Go` vs 11 Go libres).
+- [x] `c3po serve` + `/v1/chat/completions` streaming **et** non-streaming → OK,
+      `/health` reflète le modèle chargé. VRAM observée à 5.5 Go pendant le service
+      (modèle + KV + contexte CUDA bien offloadés sur GPU), libérée à l'arrêt.
+
+**Bug CUDA trouvé et corrigé — `batch.py` : `fork` → `spawn`.**
+Sur Linux, `multiprocessing` utilise `fork` par défaut. `run_batch` appelait
+`_validate_model` (qui initialise le backend CUDA dans le process parent) **avant** de
+créer le `mp.Pool`. Les workers forkés héritaient alors d'un contexte CUDA invalide
+→ segfault des workers (observé : worker en état `t`, gdb attaché dumpant la backtrace,
+process principal figé indéfiniment). Sur macOS le défaut est `spawn`, d'où l'absence
+du bug là-bas (et le `RuntimeWarning` de réimport déjà noté en Phase 5).
+Correctif : `ctx = mp.get_context("spawn"); ctx.Pool(...)` dans `run_batch`.
+Comportement désormais identique sur les deux plateformes. Après fix : batch 3/3 OK.
+
+Note opérationnelle : `c3po serve` lance `uvicorn llm_runtime.server:app` comme
+**process séparé** (pas le même PID que `c3po`) — un `pkill -f "c3po serve"` ne le
+trouve pas ; viser `pkill -f uvicorn` ou Ctrl-C en avant-plan.
 
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
