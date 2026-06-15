@@ -72,8 +72,10 @@ def check_memory_pressure(new_size_gb: float, available_gb: float) -> str | None
     à la mémoire disponible. Retourne un message d'avertissement si ça dépasse,
     sinon None.
     """
+    from .models import FIT_MARGIN
+
     others = active_instances()
-    total_gb = new_size_gb * 1.15 + sum(i["size_gb"] * 1.15 for i in others)
+    total_gb = new_size_gb * FIT_MARGIN + sum(i["size_gb"] * FIT_MARGIN for i in others)
 
     if total_gb <= available_gb:
         return None

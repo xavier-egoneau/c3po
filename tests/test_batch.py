@@ -11,9 +11,9 @@ def _make_gguf(tmp_path: Path, size_mb: int) -> Path:
     return path
 
 
-def _profile(gpu_memory_gb: float, cpu_cores: int) -> HardwareProfile:
+def _profile(gpu_memory_gb: float, cpu_cores: int, backend: Backend = Backend.METAL) -> HardwareProfile:
     return HardwareProfile(
-        backend=Backend.METAL,
+        backend=backend,
         gpu_memory_gb=gpu_memory_gb,
         cpu_memory_gb=32.0,
         cpu_cores=cpu_cores,
@@ -50,6 +50,17 @@ def test_optimal_jobs_caps_at_cpu_cores(tmp_path):
         jobs = optimal_jobs(model_path, n_ctx=2048)
 
     assert jobs == 2  # plafonné par cpu_cores // 2
+
+
+def test_optimal_jobs_is_one_on_cuda(tmp_path):
+    # GPU Nvidia : VRAM dédiée + sérialisation → une seule instance, peu importe la taille.
+    model_path = _make_gguf(tmp_path, size_mb=100)
+
+    with patch("llm_runtime.hardware.detect_hardware",
+               return_value=_profile(gpu_memory_gb=24.0, cpu_cores=32, backend=Backend.CUDA)):
+        jobs = optimal_jobs(model_path, n_ctx=2048)
+
+    assert jobs == 1
 
 
 def test_optimal_jobs_decreases_with_larger_ctx(tmp_path):

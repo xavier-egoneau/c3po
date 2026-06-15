@@ -308,10 +308,25 @@ Vérifié : 7B sur 4070 → -1/4096 ; 7B simulé sur 6 Go → -1/2048 ; 14B (8.5
 (rétrocompat des tests). KV cache encore approximé (×0.20 × taille × ctx/4096) faute de
 config d'attention exacte (GQA).
 
-Points de la revue restant ouverts (non bugs, décisions de conception) : batch
-multi-process discutable sur GPU mono-carte ; `gpu_memory_gb` = VRAM libre donc non
-déterministe ; marges mémoire (×1.1 / ×1.15) éparpillées ; `search`/`load` trompeurs sur
-les modèles multimodaux (mmproj non téléchargé).
+**Batch limité à 1 worker sur CUDA (point #8 de la revue)** : `optimal_jobs()` retourne
+désormais `1` quand le backend est CUDA. Sur une carte Nvidia la VRAM est dédiée et le GPU
+sérialise les kernels → plusieurs workers ne font que dupliquer le modèle en VRAM (risque
+d'OOM) sans gain de débit. Metal (mémoire unifiée, grande RAM) et CPU gardent le calcul
+multi-worker existant ; `--jobs` permet toujours de forcer. Vérifié : `c3po batch` sur la
+4070 annonce « 1 worker(s) » sans `--jobs` (contre 2 auparavant).
+
+**VRAM déterministe (point #6) + marge mémoire centralisée (point #7).**
+- `_detect_nvidia` part désormais de la VRAM *totale* moins une réserve fixe
+  (`_NVIDIA_RESERVE_GB = 1.0`) au lieu de la VRAM *libre*. La VRAM libre fluctuait avec
+  l'usage du bureau → `c3po list`/`search`/`info` donnaient des résultats qui bougeaient
+  d'un appel à l'autre. Sur la 4070 : 11.0 Go stable (12.0 − 1.0), au lieu de 10.8/11.0
+  variable. Query nvidia-smi simplifiée (`name,memory.total`).
+- Marge mémoire unique `models.FIT_MARGIN = 1.15` (anciennement ×1.1 dans `fits_in` et
+  ×1.15 dispersés dans `optimal_jobs`, `check_memory_pressure`, `download`). Une seule
+  source de vérité pour « est-ce que ce modèle tient ».
+
+Points de la revue restant ouverts (non bugs, décisions de conception) : `search`/`load`
+trompeurs sur les modèles multimodaux (mmproj non téléchargé) — dernier point notable.
 
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 

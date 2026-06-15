@@ -3,7 +3,9 @@ from unittest.mock import patch
 from llm_runtime.hardware import Backend, _detect_nvidia
 
 
-NVIDIA_SMI_OUTPUT = "NVIDIA GeForce RTX 4070, 12288, 11000\n"
+from llm_runtime.hardware import _NVIDIA_RESERVE_GB
+
+NVIDIA_SMI_OUTPUT = "NVIDIA GeForce RTX 4070, 12288\n"
 
 
 def test_detect_nvidia_parses_csv_output():
@@ -16,7 +18,7 @@ def test_detect_nvidia_parses_csv_output():
     assert profile is not None
     assert profile.backend == Backend.CUDA
     assert profile.device_name == "NVIDIA GeForce RTX 4070"
-    assert profile.gpu_memory_gb == 11000 / 1024
+    assert profile.gpu_memory_gb == 12288 / 1024 - _NVIDIA_RESERVE_GB
     assert profile.cpu_memory_gb == 32.0
     assert profile.cpu_cores == 16
 

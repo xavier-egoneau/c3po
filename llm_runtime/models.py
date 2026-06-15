@@ -13,6 +13,11 @@ from pathlib import Path
 OLLAMA_MANIFESTS = Path.home() / ".ollama" / "models" / "manifests"
 OLLAMA_BLOBS     = Path.home() / ".ollama" / "models" / "blobs"
 
+# Marge mémoire unique appliquée à la taille d'un modèle pour estimer s'il « tient »
+# (poids + KV cache + overhead d'allocation). Source de vérité partagée par
+# fits_in / best_model / optimal_jobs / check_memory_pressure / download.
+FIT_MARGIN = 1.15
+
 
 def models_dir() -> Path:
     """
@@ -43,8 +48,7 @@ class ModelInfo:
 
     def fits_in(self, memory_gb: float) -> bool:
         """Est-ce que ce modèle tient dans la mémoire disponible ?"""
-        # On ajoute ~10% de marge pour le KV cache
-        return self.size_gb * 1.1 <= memory_gb
+        return self.size_gb * FIT_MARGIN <= memory_gb
 
     def __str__(self) -> str:
         return (

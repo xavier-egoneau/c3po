@@ -99,13 +99,19 @@ def _detect_apple() -> HardwareProfile | None:
 # Détection Nvidia / CUDA
 # ---------------------------------------------------------------------------
 
+# Réserve fixe sur la VRAM totale (desktop/compositor + driver). On part de la VRAM
+# *totale* — capacité stable de la carte — plutôt que de la VRAM *libre*, qui fluctue
+# avec l'usage du bureau et rendait `c3po list`/`search` non déterministes.
+_NVIDIA_RESERVE_GB = 1.0
+
+
 def _detect_nvidia() -> HardwareProfile | None:
     """Retourne un profil si un GPU Nvidia est disponible, sinon None."""
     try:
         out = subprocess.check_output(
             [
                 "nvidia-smi",
-                "--query-gpu=name,memory.total,memory.free",
+                "--query-gpu=name,memory.total",
                 "--format=csv,noheader,nounits",
             ],
             text=True,
@@ -120,12 +126,13 @@ def _detect_nvidia() -> HardwareProfile | None:
     # On prend le premier GPU trouvé
     line = out.splitlines()[0]
     parts = [p.strip() for p in line.split(",")]
-    if len(parts) < 3:
+    if len(parts) < 2:
         return None
 
     name = parts[0]
-    # nvidia-smi retourne en MiB
-    vram_free_gb = int(parts[2]) / 1024
+    # nvidia-smi retourne en MiB ; capacité utilisable = total − réserve fixe
+    vram_total_gb = int(parts[1]) / 1024
+    vram_usable_gb = max(0.0, vram_total_gb - _NVIDIA_RESERVE_GB)
 
     # RAM système
     cpu_memory_gb = _get_system_ram_gb()
@@ -133,7 +140,7 @@ def _detect_nvidia() -> HardwareProfile | None:
 
     return HardwareProfile(
         backend=Backend.CUDA,
-        gpu_memory_gb=vram_free_gb,
+        gpu_memory_gb=vram_usable_gb,
         cpu_memory_gb=cpu_memory_gb,
         cpu_cores=cpu_cores,
         device_name=name,

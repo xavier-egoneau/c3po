@@ -149,10 +149,17 @@ def optimal_jobs(model_path: str | Path, n_ctx: int = 2048) -> int:
     en fonction de la mémoire disponible, de la taille du modèle
     et du KV cache (qui croît avec n_ctx).
     """
-    from llm_runtime.hardware import detect_hardware
+    from llm_runtime.hardware import Backend, detect_hardware
+
+    profile = detect_hardware()
+
+    # Sur GPU Nvidia : VRAM dédiée et limitée, et le GPU sérialise les kernels.
+    # Plusieurs workers = N copies du modèle en VRAM (risque d'OOM) sans gain de débit.
+    # On reste donc à 1 instance (override possible via --jobs).
+    if profile.backend == Backend.CUDA:
+        return 1
 
     model_size_gb = Path(model_path).stat().st_size / (1024 ** 3)
-    profile = detect_hardware()
     available = profile.gpu_memory_gb
 
     # Estimation approximative de l'overhead KV cache par instance.
@@ -160,8 +167,9 @@ def optimal_jobs(model_path: str | Path, n_ctx: int = 2048) -> int:
     # dimension d'embedding) ; on prend une heuristique simple proportionnelle à n_ctx.
     kv_overhead_gb = (n_ctx / 4096) * 1.0
 
-    # Chaque instance a besoin de la taille du modèle + ~15% de marge + KV cache
-    memory_per_instance = model_size_gb * 1.15 + kv_overhead_gb
+    # Chaque instance a besoin de la taille du modèle (+ marge) + KV cache
+    from llm_runtime.models import FIT_MARGIN
+    memory_per_instance = model_size_gb * FIT_MARGIN + kv_overhead_gb
     jobs = max(1, math.floor(available / memory_per_instance))
 
     # Plafond raisonnable : pas plus de cores physiques / 2

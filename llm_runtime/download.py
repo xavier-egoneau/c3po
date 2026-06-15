@@ -6,7 +6,7 @@ Protocole `c3po load <user>/<repo>[:QUANT]` :
   1. on liste les fichiers du repo via l'API publique HF (tailles + SHA256 LFS) ;
   2. on regroupe par quantization (en réunissant les éventuels shards) ;
   3. si la quant n'est pas précisée, on choisit automatiquement la plus grosse
-     qui tient dans la VRAM/RAM dispo (taille × 1.15 ≤ mémoire) ;
+     qui tient dans la VRAM/RAM dispo (taille × FIT_MARGIN ≤ mémoire) ;
   4. on télécharge dans ~/.c3po/models avec reprise, progression et vérification SHA256.
 
 Aucun token n'est requis pour les modèles publics. Si la variable d'environnement
@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import models_dir
+from .models import models_dir, FIT_MARGIN
 
 HF_BASE = "https://huggingface.co"
 _USER_AGENT = "c3po-llm-runtime"
@@ -83,6 +83,15 @@ def _parse_quant(filename: str) -> str | None:
     return m.group(1).upper() if m else None
 
 
+def _is_mmproj(filename: str) -> bool:
+    return "mmproj" in filename.lower()
+
+
+def has_mmproj(files: list[GGUFFile]) -> bool:
+    """Le repo contient-il un projecteur multimodal (→ modèle vision/audio) ?"""
+    return any(_is_mmproj(Path(f.path).name) for f in files if f.path.endswith(".gguf"))
+
+
 def group_by_quant(files: list[GGUFFile]) -> dict[str, QuantOption]:
     """
     Regroupe les .gguf en options téléchargeables.
@@ -98,7 +107,10 @@ def group_by_quant(files: list[GGUFFile]) -> dict[str, QuantOption]:
     for f in files:
         if not f.path.endswith(".gguf"):
             continue
-        stem = Path(f.path).name[: -len(".gguf")]
+        name = Path(f.path).name
+        if _is_mmproj(name):
+            continue  # projecteur multimodal : pas un modèle texte téléchargeable seul
+        stem = name[: -len(".gguf")]
         m = _SHARD_RE.search(stem)
         if m:
             base = stem[: m.start()] + stem[m.end():]
@@ -135,7 +147,7 @@ def choose_quant(
     Sélectionne la quantization à télécharger.
 
     requested fourni → on l'exige (erreur listant les quants dispo si absente).
-    sinon            → la plus grosse qui tient dans `available_gb` (× 1.15 de marge).
+    sinon            → la plus grosse qui tient dans `available_gb` (× FIT_MARGIN de marge).
                        Si rien ne tient, la plus petite, avec un avertissement.
     """
     if not options:
@@ -149,7 +161,7 @@ def choose_quant(
         return options[key]
 
     by_size = sorted(options.values(), key=lambda o: o.total_size)
-    fitting = [o for o in by_size if (o.total_size / 1024**3) * 1.15 <= available_gb]
+    fitting = [o for o in by_size if (o.total_size / 1024**3) * FIT_MARGIN <= available_gb]
     if fitting:
         return fitting[-1]  # la plus grosse qui tient
 
@@ -172,7 +184,7 @@ def best_fitting_quant(
     petite, avec `fits=False`. Ne lève pas et n'affiche rien (usage : recherche).
     """
     by_size = sorted(options.values(), key=lambda o: o.total_size)
-    fitting = [o for o in by_size if (o.total_size / 1024**3) * 1.15 <= available_gb]
+    fitting = [o for o in by_size if (o.total_size / 1024**3) * FIT_MARGIN <= available_gb]
     if fitting:
         return fitting[-1], True
     return by_size[0], False
