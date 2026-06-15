@@ -343,11 +343,17 @@ par-dessus (None = auto conservé). `Engine` accepte `n_gpu_layers` / `n_threads
 `LLM_RUNTIME_N_GPU_LAYERS`, …) ; `batch` via `_worker_init`. Vérifié :
 `c3po stats … --n-gpu-layers 10 --no-flash-attn --threads 4` reflète bien la config forcée.
 
-Bilan revue : 4 bugs + 6 points de conception traités (#5 params CUDA, #6 VRAM
-déterministe, #7 marges centralisées, #8 batch GPU, #9 multimodal, #13 leviers exposés).
-Restent ouverts, mineurs : #10 swap racy sous clients concurrents (mono-utilisateur en
-pratique) ; #11 benchmark `stats` sans warmup ; #12 couverture GPU/réseau manuelle (pas de
-CI GPU).
+**Derniers points mineurs (#10, #11).**
+- #11 — `stats._benchmark` fait désormais une **passe de warmup jetée** avant la mesure :
+  la 1ère génération paie la compilation des kernels CUDA / la capture du graphe. Effet
+  vérifié : TTFT du 0.5B passe de ~32 ms à ~4 ms (régime établi).
+- #10 — caractère **mono-modèle / mono-utilisateur** du serveur documenté (docstring
+  `server.py`) : sous clients concurrents multi-modèles, pas de crash mais sérialisation +
+  thrashing du chargement ; multi-modèle concurrent = hors périmètre.
+
+Bilan revue : **12/13 traités** (4 bugs + #5–#9, #10, #11, #13). Seul reste **#12** —
+couverture des chemins GPU/inférence/réseau uniquement manuelle : structurel, nécessiterait
+une CI dotée d'un GPU (les 59 tests restent de la logique pure, sans GPU ni GGUF).
 
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 

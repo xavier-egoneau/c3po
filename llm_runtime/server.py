@@ -1,6 +1,14 @@
 """
 API HTTP compatible OpenAI (/v1/chat/completions, /v1/models)
 au-dessus de l'Engine.
+
+Portée : serveur **mono-modèle, mono-utilisateur**. Un seul Engine global est chargé à la
+fois ; les générations sont sérialisées par `_engine_lock` (llama.cpp n'est pas thread-safe).
+Le swap de modèle à la requête (façon Ollama) convient à un usage séquentiel : sous des
+clients concurrents demandant des modèles *différents*, les requêtes ne crashent pas (chaque
+génération garde une référence à son Engine), mais elles se sérialisent et font « thrasher »
+le chargement (X puis Y puis X…). Pour du multi-modèle réellement concurrent, il faudrait un
+pool d'Engines / plusieurs process — hors périmètre actuel.
 """
 
 from __future__ import annotations

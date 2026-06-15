@@ -98,6 +98,13 @@ def _benchmark(engine) -> tuple[float | None, float | None, int]:
     de génération en régime établi. Retourne (ttft_s, gen_tps, gen_tokens).
     """
     messages = [{"role": "user", "content": _BENCH_PROMPT}]
+
+    # Warmup jeté : la 1ère génération paie la compilation des kernels CUDA / la
+    # capture du graphe, ce qui gonflerait le time-to-first-token. On la jette pour
+    # que la mesure reflète le régime établi.
+    for _ in engine.chat(messages, max_tokens=1, temperature=0.0, stream=True):
+        pass
+
     t0 = time.time()
     t_first: float | None = None
     count = 0
