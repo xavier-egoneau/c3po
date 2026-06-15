@@ -4,11 +4,13 @@ Prend un modèle GGUF et génère du texte avec les bons paramètres.
 """
 
 from __future__ import annotations
+import sys
 from pathlib import Path
 from typing import Any, Iterator
 
 from .hardware import detect_hardware, HardwareProfile
 from .params import compute_params, InferenceParams
+from .instances import check_memory_pressure, register_instance
 
 
 class Engine:
@@ -29,8 +31,14 @@ class Engine:
 
         self.profile = profile or detect_hardware()
         self.params = compute_params(self.profile, n_ctx=n_ctx)
+        self.size_gb = self.model_path.stat().st_size / (1024 ** 3)
+
+        warning = check_memory_pressure(self.size_gb, self.profile.gpu_memory_gb)
+        if warning:
+            print(warning, file=sys.stderr)
 
         self._llm = self._load_model()
+        register_instance(self.model_path.name, self.size_gb)
 
     def _load_model(self):
         try:

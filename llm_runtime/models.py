@@ -141,6 +141,35 @@ def list_models(
     return sorted(unique, key=lambda m: m.size_gb)
 
 
+def find_model(
+    query: str,
+    local_dirs: list[str | Path] | None = None,
+) -> ModelInfo:
+    """
+    Résout un nom de modèle (chemin direct ou sous-chaîne du nom) vers un ModelInfo.
+
+    Lève ValueError si le modèle est introuvable ou si plusieurs modèles
+    correspondent à la requête (ambiguïté).
+    """
+    p = Path(query)
+    if p.exists():
+        size_gb = p.stat().st_size / (1024 ** 3)
+        return ModelInfo(name=p.stem, path=p, size_gb=size_gb, source="local")
+
+    models = list_models(local_dirs)
+    matches = [m for m in models if query.lower() in m.name.lower()]
+
+    if not matches:
+        raise ValueError(
+            f"Modèle '{query}' introuvable. Utilisez 'c3po list' pour voir les modèles disponibles."
+        )
+    if len(matches) > 1:
+        names = ", ".join(m.name for m in matches)
+        raise ValueError(f"Plusieurs modèles correspondent à '{query}' : {names}. Précisez le nom.")
+
+    return matches[0]
+
+
 def best_model(
     available_memory_gb: float,
     local_dirs: list[str | Path] | None = None,

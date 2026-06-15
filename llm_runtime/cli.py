@@ -44,6 +44,14 @@ def cmd_list(args):
     print()
     print(f"Hardware : {profile.device_name} — {profile.gpu_memory_gb:.1f} Go disponibles")
 
+    from .instances import active_instances
+    instances = active_instances()
+    if instances:
+        print()
+        print("Instances actives :")
+        for i in instances:
+            print(f"  - PID {i['pid']:<8} {i['model']:<35} ~{i['size_gb']:.1f} Go")
+
 
 def cmd_info(args):
     """Affiche le profil hardware et les paramètres qui seraient appliqués."""
@@ -203,10 +211,8 @@ def cmd_serve(args):
 # ---------------------------------------------------------------------------
 
 def _resolve_model(query: str | None) -> Path | None:
-    from .models import list_models, best_model
+    from .models import find_model, best_model
     from .hardware import detect_hardware
-
-    models = list_models(local_dirs=["models"])
 
     if query is None:
         profile = detect_hardware()
@@ -217,24 +223,11 @@ def _resolve_model(query: str | None) -> Path | None:
         print(f"Modèle sélectionné automatiquement : {best.name}")
         return best.path
 
-    # Chemin direct
-    p = Path(query)
-    if p.exists():
-        return p
-
-    # Recherche par nom (sous-chaîne)
-    matches = [m for m in models if query.lower() in m.name.lower()]
-    if not matches:
-        print(f"Modèle '{query}' introuvable. Utilisez 'c3po list' pour voir les modèles disponibles.")
+    try:
+        return find_model(query, local_dirs=["models"]).path
+    except ValueError as e:
+        print(str(e))
         return None
-    if len(matches) > 1:
-        print(f"Plusieurs modèles correspondent à '{query}' :")
-        for m in matches:
-            print(f"  {m.name}")
-        print("Précisez le nom.")
-        return None
-
-    return matches[0].path
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ au-dessus de l'Engine.
 """
 
 from __future__ import annotations
+import gc
 import json
 import os
 import threading
@@ -15,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .engine import Engine
-from .models import list_models, best_model
+from .models import find_model, list_models, best_model
 
 
 app = FastAPI(title="llm-runtime", description="API compatible OpenAI pour llama.cpp")
@@ -28,22 +29,40 @@ _model_path: Path | None = None
 _engine_lock = threading.Lock()
 
 
-def get_engine() -> Engine:
-    """Charge le modèle à la demande (lazy load), une seule fois."""
+def get_engine(model_query: str | None = None) -> Engine:
+    """
+    Retourne le moteur servant `model_query`, en chargeant ou en remplaçant
+    le modèle actuellement chargé si besoin (façon Ollama).
+
+    - `model_query` fourni : résolu via `find_model()`. Si différent du modèle
+      chargé, l'ancien moteur est libéré et le nouveau est chargé (swap).
+    - `model_query is None` : si un moteur est déjà chargé, on le garde tel
+      quel ; sinon on choisit via `LLM_RUNTIME_MODEL` ou `best_model()`.
+    """
     global _engine, _model_path
 
-    if _engine is not None:
+    if model_query is not None:
+        target_path = find_model(model_query, local_dirs=["models"]).path
+    elif _engine is not None:
+        return _engine
+    else:
+        model_path = os.environ.get("LLM_RUNTIME_MODEL")
+        if model_path:
+            target_path = Path(model_path)
+        else:
+            info = best_model(available_memory_gb=12.0, local_dirs=["models"])
+            if info is None:
+                raise RuntimeError("Aucun modèle disponible (ni Ollama, ni ./models)")
+            target_path = info.path
+
+    if _engine is not None and target_path == _model_path:
         return _engine
 
-    model_path = os.environ.get("LLM_RUNTIME_MODEL")
-    if model_path:
-        _model_path = Path(model_path)
-    else:
-        info = best_model(available_memory_gb=12.0, local_dirs=["models"])
-        if info is None:
-            raise RuntimeError("Aucun modèle disponible (ni Ollama, ni ./models)")
-        _model_path = info.path
+    if _engine is not None:
+        del _engine
+        gc.collect()
 
+    _model_path = target_path
     _engine = Engine(_model_path)
     return _engine
 
@@ -80,18 +99,12 @@ def get_models():
 @app.post("/v1/chat/completions")
 def chat_completions(request: ChatCompletionRequest):
     try:
-        engine = get_engine()
-    except (RuntimeError, FileNotFoundError, ValueError) as e:
+        with _engine_lock:
+            engine = get_engine(request.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(status_code=503, detail=str(e))
-
-    if request.model and request.model not in (engine.model_path.stem, engine.model_path.name):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Modèle '{request.model}' non disponible. "
-                f"Ce serveur sert uniquement '{engine.model_path.name}'."
-            ),
-        )
 
     messages = [m.model_dump() for m in request.messages]
 
@@ -120,4 +133,8 @@ def chat_completions(request: ChatCompletionRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_loaded": _engine is not None}
+    return {
+        "status": "ok",
+        "model_loaded": _engine is not None,
+        "model": _model_path.name if _model_path else None,
+    }

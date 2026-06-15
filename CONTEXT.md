@@ -108,6 +108,72 @@ Suite à une revue critique du projet (8 points), correctifs appliqués :
   rm /Users/xavieregoneau/projets/runtime/c3po
   ```
 
+## Phase 7 — Swap de modèle façon Ollama, pre-commit, garde-fou multi-instances ✅
+
+- **`find_model(query, local_dirs) -> ModelInfo`** (`models.py`) : factorise la
+  résolution d'un nom de modèle (chemin direct, ou sous-chaîne du nom parmi
+  `list_models()`). Lève `ValueError` si introuvable ou ambigu (plusieurs
+  correspondances). `cli._resolve_model` est maintenant un fin wrapper autour
+  de cette fonction (comportement CLI inchangé : auto-sélection via
+  `best_model()` si aucun modèle n'est précisé).
+
+- **Swap de modèle à la volée dans `server.py`** (façon `ollama run <modèle>`) :
+  - `get_engine(model_query: str | None = None)` :
+    - `model_query` fourni → résolu via `find_model()`. Si différent du
+      modèle actuellement chargé, l'ancien `Engine` est libéré (`del` +
+      `gc.collect()`) et le nouveau est chargé.
+    - Si c'est le même modèle → cache hit, pas de rechargement.
+    - `model_query is None` → comportement historique (`LLM_RUNTIME_MODEL` ou
+      `best_model()`), sans swap implicite si un moteur est déjà chargé.
+  - `chat_completions()` : `ValueError` (modèle introuvable/ambigu) → 400,
+    `RuntimeError`/`FileNotFoundError` → 503. Le swap + la génération restent
+    sérialisés par `_engine_lock`.
+  - `GET /health` retourne désormais `"model": <nom du modèle chargé ou null>`.
+  - Vérifié en conditions réelles : `LLM_RUNTIME_MODEL=models/Qwen2.5-7B-...gguf
+    c3po serve` puis requêtes `/v1/chat/completions` avec `model: "qwen..."`
+    (chargement puis cache hit) et `model: "inconnu"` (→ 400).
+
+- **Garde-fou multi-instances** (`llm_runtime/instances.py`, nouveau) :
+  - `register_instance(model_name, size_gb)` écrit
+    `<tmpdir>/c3po-instances/<pid>.json` (`pid`, `model`, `size_gb`,
+    `started_at`), avec nettoyage `atexit`.
+  - `active_instances(exclude_pid=None)` liste les instances dont le PID est
+    encore vivant, en nettoyant les fichiers orphelins (process mort sans
+    nettoyage propre).
+  - `check_memory_pressure(new_size_gb, available_gb)` : si
+    `(new_size_gb + somme des instances actives) * 1.15 > available_gb`,
+    retourne un message d'avertissement listant les instances concurrentes —
+    **avertissement seul, jamais bloquant**.
+  - `Engine.__init__` calcule `self.size_gb`, affiche l'avertissement sur
+    `stderr` si pression mémoire détectée, puis `register_instance(...)` après
+    chargement réussi.
+  - `c3po list` affiche une section "Instances actives" (PID, modèle, taille)
+    si des instances tournent. Vérifié : `c3po serve` dans un terminal +
+    `c3po list` dans un autre → instance visible avec PID/taille corrects ;
+    le fichier de lock disparaît à l'arrêt du serveur.
+
+- **Hook pre-commit pour `requirements-lock.txt`** (anti-drift, suite Phase 6) :
+  - `pre-commit>=3.0` ajouté à `[project.optional-dependencies] dev`.
+  - `scripts/regen_lock.sh` (exécutable) régénère
+    `requirements-lock.txt` via `pip freeze --user` et le `git add`.
+  - `.pre-commit-config.yaml` : hook local `regen-lock`, déclenché uniquement
+    si `pyproject.toml` change.
+  - `.gitignore` (nouveau) : `__pycache__/`, `.pytest_cache/`, `models/*.gguf`,
+    `tmp/`, `results*.json`.
+  - Installation : `python3 -m pip install --user -e ".[dev]"` puis
+    `pre-commit install`. Comportement standard : si le hook modifie
+    `requirements-lock.txt`, le premier `git commit` est rejeté — il faut
+    `git add requirements-lock.txt` et recommit.
+
+- **Tests** (33 au total, `python3 -m pytest tests/ -v`) :
+  - `test_models.py` — `find_model()` (chemin direct, sous-chaîne, ambigu,
+    introuvable)
+  - `test_instances.py` (nouveau) — `register_instance`/`active_instances`
+    (PID mort nettoyé, PID vivant conservé), `check_memory_pressure` (OK et
+    dépassement)
+  - `test_server.py` — `get_engine()` avec `Engine` mocké (premier chargement,
+    cache hit, swap, `ValueError` sur modèle inconnu)
+
 ### Validation Machine 2 (CUDA) — à faire
 
 Le chemin CUDA (`_detect_nvidia`, `_params_cuda`) n'est couvert que par des tests

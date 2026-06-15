@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: regen-lock
+        name: Régénère requirements-lock.txt si pyproject.toml change
+        entry: scripts/regen_lock.sh
+        language: system
+        files: ^pyproject\.toml$
+        pass_filenames: false
