@@ -74,10 +74,12 @@ Deux couches coexistent dans le dépôt :
 ## Limites connues
 
 - **Swap de modèle sur CUDA** : historiquement, charger deux modèles successifs dans le même
-  process crashait (`ggml_cuda_error`). Atténué par une libération explicite
-  (`Engine.close()`) appelée avant rechargement dans `server.get_engine()`. **À valider sur
-  RTX 4070** ; si le crash persiste, le fallback robuste est l'isolation par subprocess
-  (un modèle = un process worker, déchargement = arrêt du process).
+  process crashait (`ggml_cuda_error`, cf. CONTEXT.md Phase 11). `Engine.close()` (libération
+  explicite avant rechargement dans `server.get_engine()`) rend la libération déterministe.
+  **Validé sur RTX 4070** : swap Engine-level et triple swap via `get_engine()` OK. Le crash
+  d'origine n'a pas pu être reproduit dans la config actuelle (llama-cpp-python 0.3.29,
+  driver 580) — possiblement déjà résolu en amont. Fallback robuste si le crash réapparaît :
+  isolation par subprocess (un modèle = un process worker, déchargement = arrêt du process).
 - **Couverture GPU/inférence/réseau** : manuelle uniquement (pas de CI dotée d'un GPU).
 - **Multimodal** : non branché dans l'API stable ; spike vision dans `agent/` + `experiments/`.
 

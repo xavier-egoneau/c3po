@@ -744,11 +744,18 @@ le contexte de façon déterministe).
 - **Tests** (107 au total) : `test_engine.py` (close libère le Llama, idempotence, context
   manager) ; `test_server.py` (le swap ferme l'ancien moteur).
 
-⚠️ **À valider sur RTX 4070** : la libération explicite est plus déterministe que del+gc,
-mais le backend CUDA peut garder un état global. Si le crash persiste au swap, fallback
-robuste = **isolation par subprocess** (un modèle = un process worker ; le déchargement
-devient l'arrêt du process, le contexte CUDA est récupéré par l'OS). Les commandes qui ne
-chargent qu'un seul modèle ne sont pas concernées.
+**Validé sur RTX 4070** (llama-cpp-python 0.3.29, driver 580, 16/06/2026) :
+- swap Engine-level 0.5B↔7B (et 7B↔14B avec `speculative=True`) → OK ;
+- vrai chemin serveur `server.get_engine()` en triple swap 7B→0.5B→7B → OK.
+
+⚠️ **Le crash d'origine (Phase 11) n'a pas pu être reproduit** dans la config actuelle, même
+en rejouant l'ancien chemin `del + gc` *sans* `close()`, avec speculative et deux gros
+modèles. Possiblement déjà corrigé en amont (llama.cpp/driver), ou propre à une condition du
+bench d'origine (deux modèles chargés simultanément, sans `del` intermédiaire). `Engine.close()`
+reste justifié : libération **déterministe** (vs timing du GC), ce qui importe pour le serveur
+où une requête concurrente garde une référence et retarde le `__del__`. Si le crash réapparaît,
+fallback robuste = **isolation par subprocess** (un modèle = un process worker ; le déchargement
+devient l'arrêt du process, le contexte CUDA récupéré par l'OS).
 
 ## Architecture cible complète
 ```
