@@ -434,8 +434,8 @@ def search_eligible(
         repo = meta.get("id", "")
         try:
             files = fetch_gguf_files(repo)
-        except Exception:
-            return None  # repo gated / sans tree accessible → on l'ignore
+        except (urllib.error.URLError, OSError, ValueError):
+            return None  # repo gated / sans tree accessible / sans gguf → on l'ignore
         options = group_by_quant(files)
         if not options:
             return None

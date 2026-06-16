@@ -237,18 +237,22 @@ def cmd_batch(args):
 
 def cmd_load(args):
     """Télécharge un modèle GGUF depuis Hugging Face dans le dossier modèles."""
+    import urllib.error
     from .download import load
 
     try:
         load(args.ref, quant=args.quant, dest_dir=args.dir, include_mmproj=args.mmproj)
     except ValueError as e:
         print(str(e))
-    except Exception as e:
-        print(f"Échec du téléchargement : {e}")
+    except (urllib.error.URLError, OSError) as e:
+        # Erreurs réseau / disque attendues : message propre, pas de traceback.
+        # Les erreurs inattendues (bugs) ne sont pas masquées : elles remontent.
+        print(f"Échec du téléchargement (réseau/E-S) : {e}")
 
 
 def cmd_search(args):
     """Cherche sur Hugging Face les modèles GGUF qui tiennent dans le hardware courant."""
+    import urllib.error
     from .download import search_eligible
     from .hardware import detect_hardware
 
@@ -256,8 +260,8 @@ def cmd_search(args):
     print(f"Recherche « {args.query} » sur Hugging Face… ({profile.gpu_memory_gb:.1f} Go dispo)")
     try:
         results = search_eligible(args.query, profile.gpu_memory_gb, limit=args.limit)
-    except Exception as e:
-        print(f"Échec de la recherche : {e}")
+    except (urllib.error.URLError, OSError) as e:
+        print(f"Échec de la recherche (réseau) : {e}")
         return
 
     if not args.all:

@@ -757,6 +757,28 @@ où une requête concurrente garde une référence et retarde le `__del__`. Si l
 fallback robuste = **isolation par subprocess** (un modèle = un process worker ; le déchargement
 devient l'arrêt du process, le contexte CUDA récupéré par l'OS).
 
+## Phase 22 — Suppression du lock mort + resserrage des `except` ✅
+
+Suite à la revue : nettoyage de dette concrète.
+
+- **`requirements-lock.txt` supprimé** (avec `scripts/regen_lock.sh`). Le fichier était un
+  artefact mort : (1) aucun chemin d'install ne le consommait (le README installe via
+  `pip install -e .[dev]`) ; (2) généré par `pip freeze --user`, il capturait **tout** le
+  site-packages utilisateur (`pre_commit`, `virtualenv`, `nodeenv`, `Pygments`…), pas la
+  clôture de dépendances du projet ; (3) il contenait une auto-référence éditable VCS figée
+  sur un commit (`-e git+…/c3po.git@<sha>`), non installable proprement ; (4) spécifique à la
+  version de Python (`tomli` <3.11). `pyproject.toml` (ranges) redevient la seule source de
+  vérité — cohérent avec le statut de lib. Si un vrai lock scopé devient nécessaire un jour :
+  `pip-tools` sur les deps déclarées dans un venv propre.
+- **Hook pre-commit** : le hook `regen-lock` (qui régénérait le lock pollué) est remplacé par
+  des hooks d'hygiène standard (`pre-commit/pre-commit-hooks` v5.0.0 : trailing-whitespace,
+  end-of-file-fixer, check-yaml/toml/merge-conflict, **check-added-large-files** comme
+  garde-fou anti-commit de `.gguf`).
+- **`except Exception` resserrés** : `cmd_load`/`cmd_search` (cli.py) et `search_eligible`
+  (download.py) ne catchent plus que les erreurs réseau/E-S attendues
+  (`urllib.error.URLError`, `OSError`, et `ValueError` côté inspection de repo). Les erreurs
+  inattendues (bugs) remontent au lieu d'être déguisées en « échec de téléchargement ».
+
 ## Architecture cible complète
 ```
 [utilisateur]
