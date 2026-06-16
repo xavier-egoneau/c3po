@@ -9,18 +9,22 @@ rapidement pourquoi un modèle récent ou multimodal peut ne pas fonctionner.
 from __future__ import annotations
 import importlib
 import platform
+import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .gguf import model_shape
-from .hardware import detect_hardware
+from .hardware import Backend, detect_hardware
 from .models import find_model
 
 
 @dataclass
 class DoctorReport:
     python: str
+    python_executable: str
+    c3po_executable: str | None
+    c3po_shebang: str | None
     platform: str
     backend: str
     device: str
@@ -40,6 +44,7 @@ class DoctorReport:
     mmproj_files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
 
 
 def collect_doctor(model_query: str | None = None) -> DoctorReport:
@@ -47,6 +52,9 @@ def collect_doctor(model_query: str | None = None) -> DoctorReport:
     llama_info = _llama_cpp_info()
     report = DoctorReport(
         python=sys.version.split()[0],
+        python_executable=sys.executable,
+        c3po_executable=shutil.which("c3po"),
+        c3po_shebang=_script_shebang(shutil.which("c3po")),
         platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
         backend=profile.backend.value,
         device=profile.device_name,
@@ -61,16 +69,78 @@ def collect_doctor(model_query: str | None = None) -> DoctorReport:
             "llama-cpp-python n'est pas installé : c3po peut lister/inspecter, "
             "mais ne peut pas charger de modèle."
         )
+        report.actions.extend(_install_actions(profile.backend))
     elif profile.backend in ("cuda", "metal") and report.gpu_offload_supported is False:
         report.warnings.append(
             "llama-cpp-python semble compilé sans offload GPU. Réinstalle-le avec le "
             "backend adapté (Metal/CUDA) pour éviter l'inférence CPU."
         )
+        report.actions.extend(_rebuild_actions(profile.backend))
+
+    _check_python_mismatch(report)
 
     if model_query is not None:
         _inspect_model(report, model_query)
 
     return report
+
+
+def _script_shebang(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().strip()
+    except OSError:
+        return None
+    return first[2:] if first.startswith("#!") else None
+
+
+def _check_python_mismatch(report: DoctorReport) -> None:
+    if not report.c3po_shebang:
+        return
+    shebang = report.c3po_shebang
+    current = report.python_executable
+    if shebang != current and "env " not in shebang:
+        report.warnings.append(
+            "Le binaire c3po trouvé dans PATH ne pointe pas vers le même Python que "
+            "celui qui exécute ce diagnostic. Vérifie que tu utilises le bon c3po."
+        )
+
+
+def _install_actions(backend: Backend) -> list[str]:
+    if backend == Backend.CUDA:
+        return [
+            "Installer les outils de build CUDA : sudo apt install -y nvidia-cuda-toolkit",
+            "Installer CMake : python3 -m pip install cmake",
+            "Compiler llama-cpp-python avec CUDA : CMAKE_ARGS=\"-DGGML_CUDA=on\" FORCE_CMAKE=1 python3 -m pip install --no-cache-dir llama-cpp-python",
+            "Réinstaller c3po : python3 -m pip install --user -e \".[dev]\"",
+        ]
+    if backend == Backend.METAL:
+        return [
+            "Installer/mettre à jour llama-cpp-python avec Metal : CMAKE_ARGS=\"-DGGML_METAL=on\" FORCE_CMAKE=1 python3 -m pip install --no-cache-dir llama-cpp-python",
+            "Réinstaller c3po : python3 -m pip install --user -e \".[dev]\"",
+        ]
+    return [
+        "Installer llama-cpp-python : python3 -m pip install llama-cpp-python",
+        "Réinstaller c3po : python3 -m pip install --user -e \".[dev]\"",
+    ]
+
+
+def _rebuild_actions(backend: Backend) -> list[str]:
+    if backend == Backend.CUDA:
+        return [
+            "Recompiler llama-cpp-python avec CUDA : CMAKE_ARGS=\"-DGGML_CUDA=on\" FORCE_CMAKE=1 python3 -m pip install --force-reinstall --no-cache-dir llama-cpp-python",
+            "Relancer c3po doctor pour vérifier que l'offload GPU passe à oui.",
+        ]
+    if backend == Backend.METAL:
+        return [
+            "Recompiler llama-cpp-python avec Metal : CMAKE_ARGS=\"-DGGML_METAL=on\" FORCE_CMAKE=1 python3 -m pip install --force-reinstall --no-cache-dir llama-cpp-python",
+            "Relancer c3po doctor pour vérifier que l'offload GPU passe à oui.",
+        ]
+    return [
+        "Aucun backend GPU détecté ; l'inférence CPU est attendue.",
+    ]
 
 
 def _llama_cpp_info() -> dict:
@@ -137,6 +207,12 @@ def _inspect_model(report: DoctorReport, model_query: str) -> None:
             f"disponible ({report.gpu_memory_gb:.1f} Go)."
         )
 
+    if report.arch is not None:
+        report.actions.append(
+            "Si ce modèle échoue au chargement malgré un GGUF valide, mets à jour "
+            "llama-cpp-python ou rebuild depuis une version récente de llama.cpp."
+        )
+
 
 def format_doctor(report: DoctorReport) -> str:
     def line(label: str, value) -> str:
@@ -150,6 +226,9 @@ def format_doctor(report: DoctorReport) -> str:
     out = [
         "── Environnement ──",
         line("Python", report.python),
+        line("Python exe", report.python_executable),
+        line("c3po exe", report.c3po_executable or "?"),
+        line("c3po shebang", report.c3po_shebang or "?"),
         line("Plateforme", report.platform),
         line("Backend détecté", report.backend),
         line("Device", report.device),
@@ -184,6 +263,10 @@ def format_doctor(report: DoctorReport) -> str:
     if report.errors:
         out += ["", "── Erreurs ──"]
         out += [f"  - {e}" for e in report.errors]
+
+    if report.actions:
+        out += ["", "── Actions recommandées ──"]
+        out += [f"  - {a}" for a in report.actions]
 
     if not report.warnings and not report.errors:
         out += ["", "OK : aucun problème évident détecté."]

@@ -46,12 +46,13 @@ c3po search mistral --limit 30  # inspecter plus de repos (défaut : 20)
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF          # quant choisie selon la VRAM
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF:Q5_K_M   # quant forcée
 
-# Métadonnées d'un modèle + benchmark (chargement, tok/s) sur ce hardware
+# Métadonnées d'un modèle + benchmarks (général + code/édition) sur ce hardware
 c3po stats <modèle>
 
 # Chat interactif
 c3po run <modèle>
 # L'historique est compacté automatiquement quand il approche 95% du contexte du modèle.
+# Chaque réponse est aussi bornée au budget restant pour éviter d'atteindre la fin du contexte.
 
 # Leviers d'inférence exposés (sinon auto-calculés selon le hardware) — sur run/stats/serve/batch
 c3po run <modèle> --ctx 8192 --n-gpu-layers 20 --threads 6 --no-flash-attn
@@ -82,10 +83,20 @@ Les modèles téléchargés via `c3po load` vont dans `~/.c3po/models` (surcharg
 `C3PO_MODELS_DIR`). Vous pouvez aussi déposer des `.gguf` dans `./models/` (non versionnés,
 voir `.gitignore`) — les deux dossiers sont scannés.
 
+## Compatibilité
+
 Les GGUF exportés par Unsloth ou convertis depuis un fine-tune sont utilisables directement si
 leur architecture est supportée par la version de `llama.cpp` embarquée dans
 `llama-cpp-python`. En cas de doute : `c3po doctor <modèle>` inspecte l'environnement, le
-backend GPU, l'en-tête GGUF et signale les projecteurs multimodaux `mmproj`.
+backend GPU, l'en-tête GGUF, signale les projecteurs multimodaux `mmproj` et propose les
+commandes de rebuild adaptées si `llama-cpp-python` est absent ou compilé sans offload GPU.
+Il affiche aussi le Python exact et le binaire `c3po` utilisés, utile pour repérer un décalage
+entre un Python système et un environnement pyenv/venv.
+
+Pour les modèles très récents, le point faible est souvent la version de `llama.cpp` incluse
+dans `llama-cpp-python`. `c3po doctor <modèle>` aide à distinguer un problème d'installation,
+un GGUF illisible, un modèle trop gros, un `mmproj` multimodal, ou une architecture qui demande
+une version plus récente de llama.cpp.
 
 Les commandes qui chargent un modèle (`run`, `serve`, `stats`, `batch`) arrêtent d'abord les
 autres instances c3po actives. Le projet privilégie une seule instance modèle vivante à la fois :
@@ -100,6 +111,9 @@ budget contexte multimodal, backend `libmtmd` ou délégation à `llama-server`)
 ```bash
 python3 -m pytest tests/ -v
 pre-commit install
+
+# Bench perf local reproductible (hors CI)
+scripts/bench_perf.sh
 ```
 
 Voir [CONTEXT.md](CONTEXT.md) pour le détail de l'architecture et des choix techniques.

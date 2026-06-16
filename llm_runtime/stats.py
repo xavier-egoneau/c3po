@@ -14,15 +14,41 @@ from __future__ import annotations
 import re
 import subprocess
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
 from .hardware import detect_hardware
 
 
-# Prompt de benchmark : assez long pour solliciter la génération, déterministe (temp 0).
-_BENCH_PROMPT = "Explique en quelques phrases ce qu'est un compilateur."
-_BENCH_MAX_TOKENS = 128
+# Bench général : question ouverte, représentative du débit de génération classique.
+_GENERAL_BENCH_PROMPT = "Explique en quelques phrases ce qu'est un compilateur."
+_GENERAL_BENCH_MAX_TOKENS = 128
+
+# Bench code/édition : cas favorable au prompt-lookup speculative decoding, car la sortie
+# réutilise souvent des fragments déjà présents dans le prompt.
+_CODE_SAMPLE = """def normalize_items(items):
+    result = []
+    for item in items:
+        name = item.get("name", "").strip().lower()
+        price = float(item.get("price", 0))
+        if name and price > 0:
+            result.append({"name": name, "price": price})
+    return result
+"""
+_CODE_BENCH_PROMPT = (
+    "Réécris ce code en gardant exactement la même logique, avec des noms plus "
+    "explicites, et retourne uniquement le code :\n\n" + _CODE_SAMPLE
+)
+_CODE_BENCH_MAX_TOKENS = 256
+
+
+@dataclass
+class BenchmarkStats:
+    name: str
+    description: str
+    ttft_s: float | None
+    gen_tps: float | None
+    gen_tokens: int
 
 
 @dataclass
@@ -58,6 +84,7 @@ class ModelStats:
     gen_tps: float | None         # tokens/s en génération (régime établi)
     gen_tokens: int               # nb de tokens générés pendant le bench
     vram_used_mb: float | None    # VRAM consommée par le chargement (CUDA only)
+    benchmarks: list[BenchmarkStats] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -95,12 +122,18 @@ def _meta_int(metadata: dict[str, str], *keys: str) -> int | None:
     return None
 
 
-def _benchmark(engine) -> tuple[float | None, float | None, int]:
+def _benchmark(
+    engine,
+    name: str,
+    description: str,
+    prompt: str,
+    max_tokens: int,
+) -> BenchmarkStats:
     """
     Génère quelques tokens et mesure le time-to-first-token et la vitesse
-    de génération en régime établi. Retourne (ttft_s, gen_tps, gen_tokens).
+    de génération en régime établi.
     """
-    messages = [{"role": "user", "content": _BENCH_PROMPT}]
+    messages = [{"role": "user", "content": prompt}]
 
     # Warmup jeté : la 1ère génération paie la compilation des kernels CUDA / la
     # capture du graphe, ce qui gonflerait le time-to-first-token. On la jette pour
@@ -113,7 +146,7 @@ def _benchmark(engine) -> tuple[float | None, float | None, int]:
     count = 0
 
     for chunk in engine.chat(
-        messages, max_tokens=_BENCH_MAX_TOKENS, temperature=0.0, stream=True
+        messages, max_tokens=max_tokens, temperature=0.0, stream=True
     ):
         delta = chunk["choices"][0].get("delta", {}).get("content", "")
         if delta:
@@ -127,7 +160,13 @@ def _benchmark(engine) -> tuple[float | None, float | None, int]:
     gen_tps = None
     if t_first is not None and count > 1 and t_end > t_first:
         gen_tps = (count - 1) / (t_end - t_first)
-    return ttft, gen_tps, count
+    return BenchmarkStats(
+        name=name,
+        description=description,
+        ttft_s=round(ttft, 3) if ttft is not None else None,
+        gen_tps=round(gen_tps, 1) if gen_tps is not None else None,
+        gen_tokens=count,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +229,23 @@ def collect_stats(
     n_embd = _call("n_embd", f"{arch}.embedding_length")
     n_vocab = _call("n_vocab", f"{arch}.vocab_size")
 
-    ttft, gen_tps, gen_tokens = _benchmark(engine)
+    benchmarks = [
+        _benchmark(
+            engine,
+            name="general",
+            description="question ouverte",
+            prompt=_GENERAL_BENCH_PROMPT,
+            max_tokens=_GENERAL_BENCH_MAX_TOKENS,
+        ),
+        _benchmark(
+            engine,
+            name="code",
+            description="réécriture code/édition",
+            prompt=_CODE_BENCH_PROMPT,
+            max_tokens=_CODE_BENCH_MAX_TOKENS,
+        ),
+    ]
+    general = benchmarks[0]
 
     params = engine.params  # paramètres réellement appliqués (overrides inclus)
     return ModelStats(
@@ -214,10 +269,11 @@ def collect_stats(
         speculative=params.speculative,
         repeat_penalty=params.repeat_penalty,
         load_time_s=round(load_time, 2),
-        ttft_s=round(ttft, 3) if ttft is not None else None,
-        gen_tps=round(gen_tps, 1) if gen_tps is not None else None,
-        gen_tokens=gen_tokens,
+        ttft_s=general.ttft_s,
+        gen_tps=general.gen_tps,
+        gen_tokens=general.gen_tokens,
         vram_used_mb=round(vram_used, 0) if vram_used is not None else None,
+        benchmarks=benchmarks,
     )
 
 
@@ -228,11 +284,9 @@ def format_stats(s: ModelStats) -> str:
 
     gpu = "toutes" if s.n_gpu_layers == -1 else str(s.n_gpu_layers)
     params = f"{s.n_params_b} G" if s.n_params_b is not None else "?"
-    ttft = f"{s.ttft_s * 1000:.0f} ms" if s.ttft_s is not None else "?"
-    gen = f"{s.gen_tps} tok/s" if s.gen_tps is not None else "?"
     vram = f"{s.vram_used_mb:.0f} Mo" if s.vram_used_mb is not None else "n/a (pas de GPU Nvidia)"
 
-    return "\n".join([
+    lines = [
         f"── Modèle : {s.name} ──",
         line("Fichier", f"{s.size_gb} Go"),
         line("Architecture", s.architecture),
@@ -254,9 +308,28 @@ def format_stats(s: ModelStats) -> str:
         line("speculative", s.speculative),
         line("repeat_penalty", s.repeat_penalty),
         "",
-        f"── Benchmark ({s.gen_tokens} tokens générés) ──",
+        "── Benchmark ──",
         line("Chargement", f"{s.load_time_s} s"),
-        line("1er token", ttft),
-        line("Génération", gen),
         line("VRAM modèle", vram),
-    ])
+    ]
+
+    benches = s.benchmarks or [
+        BenchmarkStats(
+            name="general",
+            description="question ouverte",
+            ttft_s=s.ttft_s,
+            gen_tps=s.gen_tps,
+            gen_tokens=s.gen_tokens,
+        )
+    ]
+    for b in benches:
+        ttft = f"{b.ttft_s * 1000:.0f} ms" if b.ttft_s is not None else "?"
+        gen = f"{b.gen_tps} tok/s" if b.gen_tps is not None else "?"
+        lines.extend([
+            "",
+            f"  {b.name} ({b.description}, {b.gen_tokens} tokens)",
+            line("1er token", ttft),
+            line("Génération", gen),
+        ])
+
+    return "\n".join(lines)

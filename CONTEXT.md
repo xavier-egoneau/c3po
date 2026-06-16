@@ -488,6 +488,10 @@ Compaction automatique du chat interactif (`c3po run`) :
   ou réduction mémoire) ;
 - quand l'historique estimé dépasse le seuil, c3po demande au modèle de résumer l'ancien
   historique en un message `system`, puis conserve les derniers messages bruts ;
+- `run` transforme aussi `max_tokens=None` en budget sûr par tour
+  (`n_ctx - tokens_prompt - marge`) et plafonne un `--max-tokens` explicite trop grand. Sans
+  ce garde-fou, llama-cpp-python peut atteindre le bord du buffer de contexte et lever une
+  erreur de forme `could not broadcast input array ...` au lieu de s'arrêter proprement ;
 - but : permettre un travail long même avec une petite fenêtre de contexte, sans atteindre
   la fin du contexte et sans couper artificiellement via `max_tokens`.
 
@@ -510,7 +514,9 @@ backend et l'API locale sont prêts.
   le modèle. Affiche Python, plateforme, hardware détecté, présence/version de
   `llama-cpp-python`, support offload GPU si exposé, puis métadonnées GGUF du modèle
   (`architecture`, contexte, couches, embedding, têtes, têtes KV). Signale aussi les
-  `mmproj*.gguf` présents à côté du modèle.
+  `mmproj*.gguf` présents à côté du modèle. Le rapport est prescriptif : si
+  `llama-cpp-python` est absent ou compilé sans offload GPU, il propose les commandes
+  d'installation/rebuild adaptées au backend détecté (CUDA, Metal ou CPU).
 - **Unsloth** : les modèles fine-tunés/exportés en GGUF par Unsloth entrent naturellement
   dans le pipeline c3po (`c3po run ./modele.gguf` ou `c3po load user/repo-GGUF:Q4_K_M`).
   `doctor` sert à distinguer problème d'environnement, fichier GGUF illisible, arch trop
@@ -520,6 +526,53 @@ backend et l'API locale sont prêts.
   un modèle multimodal comme paire `texte.gguf + mmproj.gguf`, accepter les messages
   image/audio côté CLI/API, budgéter le contexte multimodal, et s'appuyer soit sur
   `llama.cpp/libmtmd` via Python si disponible, soit sur un `llama-server` externe récent.
+
+## Phase 17 — Benchmarks `stats` général vs code/édition ✅
+
+Clarification suite à une confusion sur le speculative decoding : le chiffre historique
+**90.2 → 143.0 tok/s** venait d'une tâche de réécriture de code, favorable au
+prompt-lookup, pas du benchmark général de `c3po stats`. Sur une question ouverte, le
+prompt-lookup peut être neutre ou légèrement négatif parce qu'il a peu de tokens à recopier.
+
+`c3po stats` mesure désormais deux profils :
+- **general** : question ouverte (« Explique ce qu'est un compilateur »), représentative du
+  débit classique ;
+- **code** : réécriture de code, représentative des cas où `--speculative` peut accélérer
+  (édition, code, RAG qui recopie le contexte).
+
+Les anciens champs JSON `ttft_s` / `gen_tps` / `gen_tokens` restent alignés sur le benchmark
+`general` pour compatibilité ; le nouveau champ `benchmarks` contient les deux mesures.
+
+## Phase 18 — Compaction structurée, doctor Python, bench perf local ✅
+
+- **Compaction structurée** : le prompt de compaction impose désormais des rubriques fixes
+  (`Objectif courant`, `Décisions prises`, `Fichiers, modèles et commandes`,
+  `Contraintes utilisateur`, `État des tâches`, `Prochains pas`). Le message injecté dans
+  l'historique s'appelle « Mémoire structurée compactée ». But : réduire la perte de
+  contraintes après plusieurs cycles de compaction.
+
+- **`doctor` et environnements Python** : le diagnostic affiche maintenant `sys.executable`,
+  le binaire `c3po` trouvé dans `PATH`, et son shebang si lisible. Si le `c3po` trouvé pointe
+  vers un autre Python que le diagnostic courant, un avertissement explicite est ajouté. Cas
+  visé : confusion entre `/usr/bin/python3` sans `llama_cpp` et pyenv `3.11.11` avec CUDA.
+
+- **Bench perf reproductible** : `scripts/bench_perf.sh` (hors CI) lance une baseline locale
+  stable : 7B baseline/speculative et 14B baseline/speculative, chaque `c3po stats` affichant
+  les profils `general` et `code`. Variables : `C3PO_BIN`, `C3PO_MODEL_7B`,
+  `C3PO_MODEL_14B`, `C3PO_CTX`.
+
+## Roadmap courte — axes restants
+
+- **Stats plus pédagogiques** : quand `--speculative` est actif, rappeler dans le rendu que
+  le prompt-lookup accélère surtout code/édition/RAG et peut être neutre sur une question
+  ouverte.
+- **Serveur avec mémoire optionnelle** : garder l'API OpenAI pure sans compaction silencieuse,
+  mais explorer un mode propriétaire `serve --memory` avec sessions et compaction côté serveur.
+- **Stop sequences** : exposer `--stop` sur `run`/`serve`/`batch` pour les usages agentiques
+  ou code, afin de borner proprement certaines sorties.
+- **Multimodal progressif** : avant le runtime image/audio complet, faire évoluer `doctor` et
+  `models.py` pour représenter explicitement `texte.gguf + mmproj.gguf` et signaler
+  `mmproj trouvé/manquant/backend indisponible`.
 
 ## Axe futur — Serveur d'inférence avec batching/slots
 

@@ -131,20 +131,33 @@ def cmd_run(args):
 
             history.append({"role": "user", "content": user_input})
             history = _maybe_compact_history(engine, history)
+            max_tokens = _safe_generation_max_tokens(engine, history, args.max_tokens)
+            if max_tokens <= 0:
+                print(
+                    "[Message trop long pour la fenêtre de contexte après compaction ; "
+                    "réduisez le prompt ou relancez avec --ctx plus grand.]"
+                )
+                history.pop()
+                continue
 
             print("Assistant : ", end="", flush=True)
             full_response = ""
 
-            for chunk in engine.chat(
-                history,
-                max_tokens=args.max_tokens,
-                temperature=args.temperature,
-                stream=True,
-            ):
-                delta = chunk["choices"][0].get("delta", {}).get("content", "")
-                if delta:
-                    print(delta, end="", flush=True)
-                    full_response += delta
+            try:
+                for chunk in engine.chat(
+                    history,
+                    max_tokens=max_tokens,
+                    temperature=args.temperature,
+                    stream=True,
+                ):
+                    delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                    if delta:
+                        print(delta, end="", flush=True)
+                        full_response += delta
+            except ValueError as e:
+                print(f"\n[Erreur de génération : {e}]")
+                print("[Le contexte a probablement atteint sa limite ; l'historique sera compacté au prochain tour.]")
+                continue
 
             print()  # newline après la réponse
             history.append({"role": "assistant", "content": full_response})
@@ -270,7 +283,8 @@ def cmd_stats(args):
 
     _terminate_other_instances_before_start()
 
-    print(f"Chargement et benchmark de {model_path.name}… (quelques secondes)")
+    if not args.json:
+        print(f"Chargement et benchmark de {model_path.name}… (quelques secondes)")
     try:
         stats = collect_stats(model_path, n_ctx=args.ctx, **_engine_overrides(args))
     except RuntimeError as e:
@@ -340,6 +354,7 @@ def cmd_serve(args):
 
 _COMPACTION_RATIO = 0.95
 _COMPACTION_KEEP_MESSAGES = 4
+_GENERATION_SAFETY_TOKENS = 64
 
 
 def _maybe_compact_history(engine, history: list[dict]) -> list[dict]:
@@ -373,6 +388,34 @@ def _maybe_compact_history(engine, history: list[dict]) -> list[dict]:
     return compacted
 
 
+def _safe_generation_max_tokens(
+    engine,
+    history: list[dict],
+    requested_max_tokens: int | None,
+) -> int:
+    """
+    Borne la génération pour ne jamais atteindre la fin du contexte llama.cpp.
+
+    `max_tokens=None` est pratique pour laisser le modèle finir naturellement, mais
+    quand l'historique approche de `n_ctx`, llama-cpp-python peut échouer au bord du
+    buffer au lieu de s'arrêter proprement. On transforme donc le None en budget sûr
+    par tour, et on plafonne aussi un `--max-tokens` explicite trop ambitieux.
+    """
+    try:
+        prompt_tokens = engine.count_messages_tokens(history)
+    except Exception:
+        return requested_max_tokens if requested_max_tokens is not None else max(
+            1, engine.params.n_ctx // 2
+        )
+
+    available = engine.params.n_ctx - prompt_tokens - _GENERATION_SAFETY_TOKENS
+    if available <= 0:
+        return 0
+    if requested_max_tokens is None or requested_max_tokens <= 0:
+        return available
+    return min(requested_max_tokens, available)
+
+
 def _compact_history(engine, history: list[dict], token_limit: int) -> list[dict]:
     if len(history) <= 1:
         return history
@@ -390,9 +433,16 @@ def _compact_history(engine, history: list[dict], token_limit: int) -> list[dict
             "role": "system",
             "content": (
                 "Tu compactes une conversation pour permettre de continuer longtemps. "
-                "Conserve seulement les informations utiles pour la suite : objectifs, "
-                "décisions, contraintes, fichiers, bugs, commandes importantes, préférences. "
-                "Réponds uniquement par un résumé structuré et concis."
+                "Réponds uniquement en Markdown, avec exactement ces rubriques :\n"
+                "## Objectif courant\n"
+                "## Décisions prises\n"
+                "## Fichiers, modèles et commandes\n"
+                "## Contraintes utilisateur\n"
+                "## État des tâches\n"
+                "## Prochains pas\n"
+                "Conserve les faits utiles, les préférences, les erreurs rencontrées, "
+                "les commandes importantes et les décisions techniques. Sois concis, "
+                "mais ne perds aucune contrainte nécessaire pour continuer."
             ),
         },
         {"role": "user", "content": transcript},
@@ -407,7 +457,7 @@ def _compact_history(engine, history: list[dict], token_limit: int) -> list[dict
     compacted = [
         {
             "role": "system",
-            "content": "Résumé compacté de la conversation précédente :\n" + summary,
+            "content": "Mémoire structurée compactée de la conversation précédente :\n" + summary,
         },
         *tail,
     ]
