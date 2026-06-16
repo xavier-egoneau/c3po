@@ -1,4 +1,10 @@
-# llm-runtime — Contexte projet
+# llm-runtime — Journal de décisions
+
+> **Ce fichier est un journal chronologique** des phases de dev et des décisions techniques.
+> Pour l'**état actuel** de l'architecture, voir [ARCHITECTURE.md](ARCHITECTURE.md).
+> Certaines décisions anciennes ont été remplacées plus tard (ex. le blocage mémoire de la
+> Phase 13, remplacé par la politique mono-instance en Phase 15) — l'entrée de journal la
+> plus récente fait foi.
 
 ## Objectif
 Construire une lib Python (`llm_runtime`) qui orchestre llama.cpp avec routing hardware automatique : Apple Silicon (Metal) ou Nvidia (CUDA). Similaire à Ollama mais avec les leviers exposés, pas cachés.
@@ -14,7 +20,7 @@ Construire une lib Python (`llm_runtime`) qui orchestre llama.cpp avec routing h
 
 ## Structure du projet
 ```
-/Users/xavieregoneau/projets/runtime/
+c3po/
 ├── pyproject.toml
 ├── models/
 │   └── Qwen2.5-7B-Instruct-Q4_K_M.gguf   # modèle de dev (4.4 Go)

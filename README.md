@@ -119,4 +119,5 @@ pre-commit install
 scripts/bench_perf.sh
 ```
 
-Voir [CONTEXT.md](CONTEXT.md) pour le détail de l'architecture et des choix techniques.
+Voir [ARCHITECTURE.md](ARCHITECTURE.md) pour l'état actuel du système, et
+[CONTEXT.md](CONTEXT.md) pour le journal chronologique des décisions techniques.

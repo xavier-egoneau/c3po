@@ -66,17 +66,18 @@ def compute_params(
         n_ctx = min(n_ctx, n_ctx_train)
 
     if profile.backend == Backend.METAL:
-        return _params_metal(profile, n_ctx)
+        return _params_metal(profile, n_ctx, kv_type)
 
     elif profile.backend == Backend.CUDA:
         return _params_cuda(profile, n_ctx, model_size_gb, n_layers,
                             n_embd, n_heads, n_kv_heads, kv_type)
 
     else:  # CPU fallback
-        return _params_cpu(profile, n_ctx)
+        return _params_cpu(profile, n_ctx, kv_type)
 
 
-def _params_metal(profile: HardwareProfile, n_ctx: int) -> InferenceParams:
+def _params_metal(profile: HardwareProfile, n_ctx: int,
+                  kv_type: str | None = None) -> InferenceParams:
     """
     Apple Silicon : mémoire unifiée, tout peut aller sur le GPU.
     On met toutes les couches sur Metal (-1) et on utilise
@@ -89,11 +90,14 @@ def _params_metal(profile: HardwareProfile, n_ctx: int) -> InferenceParams:
     # Flash attention utile dès que le contexte dépasse 2048
     flash = n_ctx > 2048
 
+    # Mémoire unifiée : pas besoin de quantifier le KV pour faire tenir le contexte.
+    # On n'auto-quantifie donc jamais, mais on honore un override explicite (kv_type fourni).
     return InferenceParams(
         n_gpu_layers=-1,
         n_threads=threads,
         n_ctx=n_ctx,
         use_flash_attn=flash,
+        kv_type=kv_type or "f16",
     )
 
 
@@ -207,11 +211,13 @@ def apply_overrides(
     return params
 
 
-def _params_cpu(profile: HardwareProfile, n_ctx: int) -> InferenceParams:
+def _params_cpu(profile: HardwareProfile, n_ctx: int,
+                kv_type: str | None = None) -> InferenceParams:
     """CPU only : on maximise les threads, on réduit le contexte."""
     return InferenceParams(
         n_gpu_layers=0,
         n_threads=profile.cpu_cores,
         n_ctx=min(n_ctx, 2048),  # contexte réduit pour tenir en RAM
         use_flash_attn=False,
+        kv_type=kv_type or "f16",
     )

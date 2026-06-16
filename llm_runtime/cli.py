@@ -23,15 +23,24 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 def _terminate_other_instances_before_start() -> None:
-    """Ferme les autres modèles c3po déjà chargés avant de démarrer celui-ci."""
-    from .instances import terminate_other_instances
+    """
+    Ferme les autres modèles c3po déjà chargés avant de démarrer celui-ci
+    (politique mono-instance). Les instances visées sont annoncées *avant* d'être
+    arrêtées — y compris un `c3po serve` en cours : pas de kill silencieux.
+    """
+    from .instances import active_instances, terminate_other_instances
+
+    targets = active_instances()
+    if not targets:
+        return
+
+    print("Politique mono-instance : arrêt des instances c3po existantes…")
+    for i in targets:
+        print(f"  - PID {i['pid']} : {i['model']} (~{i['size_gb']:.1f} Go)")
 
     stopped = terminate_other_instances()
-    if stopped:
-        print("Instances c3po existantes arrêtées :")
-        for i in stopped:
-            print(f"  - PID {i['pid']} : {i['model']} (~{i['size_gb']:.1f} Go)")
-        print()
+    print(f"{len(stopped)} instance(s) arrêtée(s).")
+    print()
 
 
 # ---------------------------------------------------------------------------

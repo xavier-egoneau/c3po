@@ -30,6 +30,23 @@ def test_metal_params_large_ctx_enables_flash_attn():
     assert params.use_flash_attn is True
 
 
+def test_metal_default_kv_type_is_f16():
+    profile = _profile(Backend.METAL, gpu_memory_gb=12.0, cpu_cores=10)
+    assert compute_params(profile, n_ctx=4096).kv_type == "f16"
+
+
+def test_metal_honors_explicit_kv_type():
+    # Mémoire unifiée → pas d'auto-quantization, mais un override explicite doit passer
+    # (sinon `--kv-type q8` serait silencieusement ignoré sur Apple Silicon).
+    profile = _profile(Backend.METAL, gpu_memory_gb=12.0, cpu_cores=10)
+    assert compute_params(profile, n_ctx=4096, kv_type="q8_0").kv_type == "q8_0"
+
+
+def test_cpu_honors_explicit_kv_type():
+    profile = _profile(Backend.CPU, gpu_memory_gb=0.0, cpu_cores=8)
+    assert compute_params(profile, n_ctx=2048, kv_type="q4_0").kv_type == "q4_0"
+
+
 def test_cuda_params_high_vram_uses_all_layers():
     profile = _profile(Backend.CUDA, gpu_memory_gb=12.0, cpu_cores=16)
     params = compute_params(profile, n_ctx=4096)
