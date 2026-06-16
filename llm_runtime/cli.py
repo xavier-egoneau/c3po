@@ -146,7 +146,7 @@ def cmd_run(args):
 
 
 def cmd_batch(args):
-    """Traitement batch parallèle sur fichiers ou prompts."""
+    """Traitement batch mono-instance sur fichiers ou prompts."""
     from .batch import (
         tasks_from_files, tasks_from_prompts,
         run_batch, save_results, optimal_jobs,
@@ -542,7 +542,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_engine_args(p_serve)
 
     # batch
-    p_batch = sub.add_parser("batch", help="Traitement batch parallèle")
+    p_batch = sub.add_parser("batch", help="Traitement batch mono-instance")
     p_batch.add_argument("model", nargs="?", default=None,
                          help="Nom ou chemin du modèle (auto si omis)")
     p_batch.add_argument("--input", nargs="+", metavar="FICHIER",

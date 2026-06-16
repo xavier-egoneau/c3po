@@ -1,6 +1,5 @@
 """
-Traitement batch parallèle : plusieurs instances du modèle en multi-process.
-Chaque worker charge le modèle indépendamment dans son propre process.
+Traitement batch mono-instance : les tâches passent en file derrière un seul modèle chargé.
 
 Cas d'usage :
   - Fichiers  : lire N fichiers, appliquer un prompt, collecter les réponses
@@ -61,15 +60,11 @@ _gen_max_tokens: int | None = None
 
 def _worker_init(model_path: str, n_ctx: int, engine_overrides: dict | None = None,
                  max_tokens: int | None = None):
-    """
-    Initialise le modèle dans le sous-process.
-    Appelé une seule fois par worker — le modèle reste chargé en mémoire
-    pour toute la durée de la session batch.
-    """
+    """Initialise le modèle dans le worker batch mono-instance."""
     global _engine, _gen_max_tokens
     from llm_runtime.engine import Engine
-    # force=True : un batch est un job explicite au premier plan ; on avertit mais on ne
-    # bloque pas sur la pression mémoire (sinon le pool entier échouerait à l'init).
+    # force=True : le batch a déjà arrêté les autres instances au niveau CLI.
+    # On évite qu'un lock résiduel bloque l'initialisation du worker.
     _engine = Engine(model_path, n_ctx=n_ctx, force=True, **(engine_overrides or {}))
     _gen_max_tokens = max_tokens
 
