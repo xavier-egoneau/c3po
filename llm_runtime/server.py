@@ -88,7 +88,11 @@ def get_engine(model_query: str | None = None) -> Engine:
         return _engine
 
     if _engine is not None:
-        del _engine
+        # Libération explicite avant rechargement : sur CUDA, le del + gc seul ne
+        # libère pas le contexte de façon déterministe (cf. Engine.close / CONTEXT.md).
+        _engine.close()
+        _engine = None
+        _model_path = None
         gc.collect()
 
     _model_path = target_path

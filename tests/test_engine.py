@@ -135,3 +135,27 @@ def test_missing_model_file_raises(tmp_path):
     with _patched_engine():
         with pytest.raises(FileNotFoundError, match="introuvable"):
             Engine(tmp_path / "absent.gguf")
+
+
+def test_close_releases_underlying_llm(model_file):
+    with _patched_engine() as (_reg, load):
+        engine = Engine(model_file)
+    llm = load.return_value  # le MagicMock renvoyé par _load_model
+    engine.close()
+    llm.close.assert_called_once()
+    assert engine._llm is None
+
+
+def test_close_is_idempotent(model_file):
+    with _patched_engine() as (_reg, load):
+        engine = Engine(model_file)
+    engine.close()
+    engine.close()  # ne doit pas lever ni rappeler close()
+    load.return_value.close.assert_called_once()
+
+
+def test_context_manager_closes_on_exit(model_file):
+    with _patched_engine() as (_reg, load):
+        with Engine(model_file) as engine:
+            assert engine._llm is not None
+    load.return_value.close.assert_called_once()

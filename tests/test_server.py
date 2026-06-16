@@ -89,6 +89,9 @@ def test_get_engine_swaps_on_different_model():
         assert MockEngine.call_count == 2
         assert first is not second
         assert server._model_path == Path("models/gemma4.gguf")
+        # L'ancien moteur doit être libéré explicitement avant le rechargement
+        # (le del + gc seul ne suffit pas sur CUDA).
+        first.close.assert_called_once()
 
 
 def test_get_engine_unknown_model_raises_value_error():

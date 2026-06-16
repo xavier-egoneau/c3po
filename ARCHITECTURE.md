@@ -73,8 +73,11 @@ Deux couches coexistent dans le dépôt :
 
 ## Limites connues
 
-- **Swap de modèle sur CUDA** : charger deux modèles successifs dans le même process crashe
-  (`ggml_cuda_error`) ; `server.get_engine()` swap n'est validé que sur Metal.
+- **Swap de modèle sur CUDA** : historiquement, charger deux modèles successifs dans le même
+  process crashait (`ggml_cuda_error`). Atténué par une libération explicite
+  (`Engine.close()`) appelée avant rechargement dans `server.get_engine()`. **À valider sur
+  RTX 4070** ; si le crash persiste, le fallback robuste est l'isolation par subprocess
+  (un modèle = un process worker, déchargement = arrêt du process).
 - **Couverture GPU/inférence/réseau** : manuelle uniquement (pas de CI dotée d'un GPU).
 - **Multimodal** : non branché dans l'API stable ; spike vision dans `agent/` + `experiments/`.
 

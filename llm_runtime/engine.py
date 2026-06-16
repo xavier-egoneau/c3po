@@ -189,6 +189,37 @@ class Engine:
             stream=stream,
         )
 
+    def close(self) -> None:
+        """
+        Libère explicitement le modèle et le contexte (backend GPU compris).
+
+        Sur CUDA, s'en remettre au GC (`del` + `gc.collect()`) ne libère pas de façon
+        déterministe le contexte : un rechargement dans le même process peut alors
+        crasher (`ggml_cuda_error` dans `mul_mat_q`, cf. CONTEXT.md Phase 11). On ferme
+        donc explicitement l'objet `Llama` sous-jacent, qui libère le modèle et le
+        contexte via son `ExitStack` interne plutôt qu'au gré du ramasse-miettes.
+
+        Idempotent : un second appel ne fait rien.
+        """
+        llm = getattr(self, "_llm", None)
+        if llm is None:
+            return
+        close = getattr(llm, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # Best-effort : on ne veut jamais qu'une libération ratée masque
+                # l'erreur réelle (ou empêche le chargement suivant).
+                pass
+        self._llm = None
+
+    def __enter__(self) -> "Engine":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def count_text_tokens(self, text: str) -> int:
         """Estime le nombre de tokens d'un texte avec le tokenizer du modèle chargé."""
         try:
