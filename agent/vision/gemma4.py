@@ -12,6 +12,7 @@ import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent.structured import FieldSpec, extract_json_object, validate_object
 from llm_runtime.gguf import model_shape
 from llm_runtime.hardware import detect_hardware
 from llm_runtime.models import ModelInfo, find_model, models_dir
@@ -26,12 +27,20 @@ DEFAULT_PROMPT = (
     "consigne ; utilise une liste vide si aucun texte n'est visible. "
     "Utilise des listes pour ocr, objects et uncertainties. Si tu ne sais pas, indique-le."
 )
+VISION_OBSERVATION_SCHEMA = {
+    "caption": str,
+    "ocr": list,
+    "objects": list,
+    "layout": FieldSpec((str, list), required=True),
+    "uncertainties": list,
+}
 
 
 @dataclass
 class VisionObservationResult:
     raw: str
     parsed: dict | None
+    errors: list[str]
     model_path: str
     mmproj_path: str
 
@@ -72,9 +81,11 @@ def observe_image(
         max_tokens=max_tokens,
         temperature=temperature,
     )
+    parsed = parse_jsonish(content)
     return VisionObservationResult(
         raw=content,
-        parsed=parse_jsonish(content),
+        parsed=parsed,
+        errors=validate_object(parsed, VISION_OBSERVATION_SCHEMA),
         model_path=str(model_info.path),
         mmproj_path=str(mmproj_path),
     )
@@ -154,16 +165,7 @@ def data_uri(path: str | Path) -> str:
 
 
 def parse_jsonish(text: str) -> dict | None:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:].strip()
-    try:
-        value = json.loads(cleaned)
-    except Exception:
-        return None
-    return value if isinstance(value, dict) else None
+    return extract_json_object(text)
 
 
 def format_observation(result: VisionObservationResult) -> str:

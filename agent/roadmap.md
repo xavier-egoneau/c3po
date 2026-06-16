@@ -185,11 +185,15 @@ c3po-core / llama.cpp, la capacité reste indisponible côté c3po.
 Construire un prototype minimal hors API stable :
 
 1. `agent/capabilities.py` : modèle de capacités backend.
-2. `agent/structured.py` : validation JSON + retry.
+2. `agent/structured.py` : validation JSON + retry. Base créée :
+   - extraction d'objet JSON depuis une réponse brute ou fenced ;
+   - validation de champs/types ;
+   - retry générique avec retour d'erreurs ;
+   - premier usage par `agent/vision/gemma4.py`.
 3. `agent/prompts/` : prompts système pour petits modèles.
 4. `agent/evals/` : suite smoke + JSON + tool-call emulation.
 5. `agent/vision/` : encapsuler le spike `experiments/vision_gemma4.py` en primitive
-   image -> observation structurée.
+   image -> observation structurée. Base créée avec Gemma 4 E2B + `mmproj`.
 6. Un script manuel pour comparer :
    - modèle local brut ;
    - modèle local + c3po-agent scaffold ;

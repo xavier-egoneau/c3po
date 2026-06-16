@@ -1,11 +1,13 @@
 import base64
 
 from agent.vision.gemma4 import (
+    VISION_OBSERVATION_SCHEMA,
     data_uri,
     find_mmproj,
     parse_jsonish,
     vision_messages,
 )
+from agent.structured import validate_object
 
 
 def test_data_uri_encodes_image_file(tmp_path):
@@ -31,7 +33,20 @@ def test_vision_messages_use_openai_style_image_part(tmp_path):
 def test_parse_jsonish_accepts_plain_and_fenced_json():
     assert parse_jsonish('{"caption": "ok"}') == {"caption": "ok"}
     assert parse_jsonish('```json\n{"caption": "ok"}\n```') == {"caption": "ok"}
+    assert parse_jsonish('Réponse:\n{"caption": "ok"}') == {"caption": "ok"}
     assert parse_jsonish("pas du json") is None
+
+
+def test_vision_observation_schema_validates_expected_shape():
+    parsed = {
+        "caption": "un carré rouge et un carré bleu",
+        "ocr": [],
+        "objects": ["carré rouge", "carré bleu"],
+        "layout": "deux carrés côte à côte",
+        "uncertainties": [],
+    }
+
+    assert validate_object(parsed, VISION_OBSERVATION_SCHEMA) == []
 
 
 def test_find_mmproj_prefers_bf16(tmp_path, monkeypatch):
