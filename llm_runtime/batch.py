@@ -57,15 +57,22 @@ class BatchSummary:
 # Worker (tourne dans un sous-process)
 # ---------------------------------------------------------------------------
 
-def _worker_init(model_path: str, n_ctx: int, engine_overrides: dict | None = None):
+_gen_max_tokens: int | None = None
+
+
+def _worker_init(model_path: str, n_ctx: int, engine_overrides: dict | None = None,
+                 max_tokens: int | None = None):
     """
     Initialise le modèle dans le sous-process.
     Appelé une seule fois par worker — le modèle reste chargé en mémoire
     pour toute la durée de la session batch.
     """
-    global _engine
+    global _engine, _gen_max_tokens
     from llm_runtime.engine import Engine
-    _engine = Engine(model_path, n_ctx=n_ctx, **(engine_overrides or {}))
+    # force=True : un batch est un job explicite au premier plan ; on avertit mais on ne
+    # bloque pas sur la pression mémoire (sinon le pool entier échouerait à l'init).
+    _engine = Engine(model_path, n_ctx=n_ctx, force=True, **(engine_overrides or {}))
+    _gen_max_tokens = max_tokens
 
 
 def _worker_run(task: BatchTask) -> BatchResult:
@@ -77,7 +84,7 @@ def _worker_run(task: BatchTask) -> BatchResult:
     tokens = 0
     try:
         messages = [{"role": "user", "content": task.prompt}]
-        result = _engine.chat(messages, max_tokens=512, temperature=0.7, stream=False)
+        result = _engine.chat(messages, max_tokens=_gen_max_tokens, temperature=0.7, stream=False)
         response = result["choices"][0]["message"]["content"]
         tokens = result.get("usage", {}).get("completion_tokens", 0)
         error = None
@@ -206,6 +213,7 @@ def run_batch(
     n_ctx: int = 2048,
     verbose: bool = True,
     engine_overrides: dict | None = None,
+    max_tokens: int | None = None,
 ) -> BatchSummary:
     """
     Lance le batch en multi-process.
@@ -239,7 +247,7 @@ def run_batch(
     with ctx.Pool(
         processes=jobs,
         initializer=_worker_init,
-        initargs=(model_path, n_ctx, engine_overrides),
+        initargs=(model_path, n_ctx, engine_overrides, max_tokens),
     ) as pool:
         for i, result in enumerate(pool.imap_unordered(_worker_run, tasks), start=1):
             results.append(result)

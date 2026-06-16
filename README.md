@@ -11,6 +11,19 @@ que cachés.
 python3 -m pip install --user -e ".[dev]"
 ```
 
+**Apple Silicon (Metal)** : le backend Metal est activé par défaut, rien de plus à faire.
+
+**Nvidia (CUDA)** : `llama-cpp-python` doit être compilé avec le backend CUDA (nécessite le
+CUDA toolkit `nvcc` + `cmake`) — les wheels précompilées sont trop anciennes pour les modèles
+récents :
+
+```bash
+sudo apt install -y nvidia-cuda-toolkit          # fournit nvcc (ou repo NVIDIA)
+python3 -m pip install cmake
+CMAKE_ARGS="-DGGML_CUDA=on" python3 -m pip install --no-cache-dir llama-cpp-python
+python3 -m pip install --user -e ".[dev]"
+```
+
 ## Utilisation
 
 ```bash
@@ -23,6 +36,7 @@ c3po info
 # Cherche sur Hugging Face les modèles GGUF qui tiennent dans ta VRAM
 c3po search qwen2.5            # éligibles seulement
 c3po search "llama 3" --all   # tout, avec colonne FIT
+c3po search mistral --limit 30  # inspecter plus de repos (défaut : 20)
 
 # Télécharge un modèle GGUF depuis Hugging Face (quant auto selon la VRAM)
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF          # quant choisie selon la VRAM
@@ -44,16 +58,27 @@ c3po run <modèle> --ctx 32768 --kv-type q8
 # (code, RAG, édition) — sortie identique, juste plus rapide. À éviter sur du texte créatif.
 c3po run <modèle> --speculative
 
-# Serveur HTTP compatible OpenAI (GET /v1/models, POST /v1/chat/completions, GET /health)
-c3po serve [<modèle>] [--port 8000]
+# Pénalité de répétition (défaut 1.1 ; monter si le modèle boucle ; 1.0 = aucune)
+c3po run <modèle> --repeat-penalty 1.3
 
-# Traitement batch parallèle (un worker par fichier)
-c3po batch <modèle> --input fichier1.txt fichier2.txt --prompt "Résume : {content}" --output results.json
+# Serveur HTTP compatible OpenAI (GET /v1/models, POST /v1/chat/completions, GET /health)
+# Écoute sur 127.0.0.1 par défaut ; --host 0.0.0.0 pour exposer sur le réseau (sans auth !)
+c3po serve [<modèle>] [--port 8000] [--host 127.0.0.1]
+
+# Traitement batch (multi-worker sur CPU/Metal, séquentiel sur GPU Nvidia mono-carte)
+c3po batch <modèle> --input fichier1.txt fichier2.txt --prompt "Résume : {content}" \
+    --output results.json [--jobs N] [--ctx 2048] [--max-tokens N]
 ```
+
+Par défaut, `run`/`serve`/`batch` génèrent jusqu'à la fin de la réponse (ou la limite de
+contexte) — `--max-tokens` ne sert qu'à borner volontairement.
 
 Les modèles téléchargés via `c3po load` vont dans `~/.c3po/models` (surchargeable via
 `C3PO_MODELS_DIR`). Vous pouvez aussi déposer des `.gguf` dans `./models/` (non versionnés,
 voir `.gitignore`) — les deux dossiers sont scannés.
+
+Lancer un modèle qui ferait dépasser la mémoire disponible (en tenant compte des instances
+c3po déjà actives) est **bloqué** avec un message clair ; forcer avec `C3PO_FORCE=1`.
 
 ## Développement
 

@@ -4,6 +4,7 @@ Prend un modèle GGUF et génère du texte avec les bons paramètres.
 """
 
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 from typing import Any, Iterator
@@ -30,6 +31,8 @@ class Engine:
         flash_attn: bool | None = None,
         kv_type: str | None = None,
         speculative: bool = False,
+        repeat_penalty: float | None = None,
+        force: bool = False,
     ):
         self.model_path = Path(model_path)
         if not self.model_path.exists():
@@ -66,10 +69,21 @@ class Engine:
             )
 
         self.params.speculative = speculative
+        if repeat_penalty is not None:
+            self.params.repeat_penalty = repeat_penalty
 
         warning = check_memory_pressure(self.size_gb, self.profile.gpu_memory_gb)
         if warning:
-            print(warning, file=sys.stderr)
+            forced = force or os.environ.get("C3PO_FORCE") == "1"
+            if forced:
+                print(warning, file=sys.stderr)
+                print("(C3PO_FORCE : chargement forcé malgré la pression mémoire.)",
+                      file=sys.stderr)
+            else:
+                raise RuntimeError(
+                    warning + "\n\nChargement bloqué pour éviter un dépassement mémoire. "
+                    "Ferme une instance active, ou force avec C3PO_FORCE=1."
+                )
 
         self._llm = self._load_model()
         register_instance(self.model_path.name, self.size_gb)
@@ -133,6 +147,7 @@ class Engine:
             prompt,
             max_tokens=max_tokens,
             temperature=temperature,
+            repeat_penalty=self.params.repeat_penalty,
             echo=False,
         )
         return result["choices"][0]["text"]
@@ -144,6 +159,7 @@ class Engine:
             prompt,
             max_tokens=max_tokens,
             temperature=temperature,
+            repeat_penalty=self.params.repeat_penalty,
             stream=True,
             echo=False,
         ):
@@ -169,6 +185,7 @@ class Engine:
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            repeat_penalty=self.params.repeat_penalty,
             stream=stream,
         )
 

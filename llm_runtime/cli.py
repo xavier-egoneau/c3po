@@ -81,7 +81,11 @@ def cmd_run(args):
         return
 
     print(f"Chargement de {model_path.name}…")
-    engine = Engine(model_path, n_ctx=args.ctx, **_engine_overrides(args))
+    try:
+        engine = Engine(model_path, n_ctx=args.ctx, **_engine_overrides(args))
+    except RuntimeError as e:
+        print(str(e))
+        return
     print(engine)
     print()
     print("Session de chat (Ctrl+C ou 'exit' pour quitter)")
@@ -165,7 +169,8 @@ def cmd_batch(args):
 
     jobs = args.jobs or optimal_jobs(model_path, n_ctx=args.ctx)
     summary = run_batch(tasks, model_path, jobs=jobs, n_ctx=args.ctx,
-                        engine_overrides=_engine_overrides(args))
+                        engine_overrides=_engine_overrides(args),
+                        max_tokens=args.max_tokens)
 
     if args.output:
         save_results(summary, args.output)
@@ -235,7 +240,11 @@ def cmd_stats(args):
         return
 
     print(f"Chargement et benchmark de {model_path.name}… (quelques secondes)")
-    stats = collect_stats(model_path, n_ctx=args.ctx, **_engine_overrides(args))
+    try:
+        stats = collect_stats(model_path, n_ctx=args.ctx, **_engine_overrides(args))
+    except RuntimeError as e:
+        print(str(e))
+        return
 
     if args.json:
         import json
@@ -267,6 +276,8 @@ def cmd_serve(args):
         env["LLM_RUNTIME_KV_TYPE"] = _KV_ALIASES[args.kv_type]
     if args.speculative:
         env["LLM_RUNTIME_SPECULATIVE"] = "1"
+    if args.repeat_penalty is not None:
+        env["LLM_RUNTIME_REPEAT_PENALTY"] = str(args.repeat_penalty)
 
     print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
     if args.host == "0.0.0.0":
@@ -334,6 +345,9 @@ def _add_engine_args(parser: argparse.ArgumentParser, ctx_default: int = 4096) -
     parser.add_argument("--speculative", action="store_true",
                         help="Prompt-lookup decoding : accélère les sorties qui recopient "
                              "l'entrée (code, RAG, édition) ; à éviter sur du texte créatif")
+    parser.add_argument("--repeat-penalty", type=float, default=None, dest="repeat_penalty",
+                        help="Pénalité de répétition (défaut 1.1 ; 1.0 = aucune ; "
+                             "monter à ~1.2-1.3 si le modèle boucle)")
 
 
 # Alias CLI courts → noms ggml canoniques
@@ -349,6 +363,7 @@ def _engine_overrides(args) -> dict:
         "flash_attn": getattr(args, "flash_attn", None),
         "kv_type": _KV_ALIASES.get(kv) if kv else None,
         "speculative": getattr(args, "speculative", False),
+        "repeat_penalty": getattr(args, "repeat_penalty", None),
     }
 
 
@@ -420,6 +435,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Fichier JSON de sortie (ex: results.json)")
     p_batch.add_argument("--jobs", type=int, default=None,
                          help="Nombre de workers parallèles (auto si omis)")
+    p_batch.add_argument("--max-tokens", type=int, default=None, dest="max_tokens",
+                         help="Limite de tokens par tâche (auto si omis : jusqu'à la fin "
+                              "de la réponse ou la limite de contexte)")
     _add_engine_args(p_batch, ctx_default=2048)
 
     return parser

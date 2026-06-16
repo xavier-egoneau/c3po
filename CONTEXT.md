@@ -430,6 +430,39 @@ Note : test de chargement concurrent qui a échoué proprement → le **garde-fo
 les 11 Go de la 4070 et a averti. Confirme qu'il faut **un seul gros modèle à la fois** sur
 cette carte.
 
+## Phase 13 — Batch `--max-tokens`, blocage mémoire des instances, MAJ README ✅
+
+- **`batch --max-tokens`** : la limite par tâche était codée en dur à 512 dans le worker
+  (même pas réglable). Exposée en flag (défaut None = auto, comme `run`) ; propagée via
+  `run_batch` → `_worker_init` (global `_gen_max_tokens`).
+
+- **Blocage mémoire des instances** (réponse à « 2 instances OK mais pas 3 sur Mac »). Le
+  garde-fou Phase 7 n'était qu'un avertissement non bloquant → sur CUDA il avertissait puis
+  **crashait en OOM**. Désormais `Engine` **lève une `RuntimeError` claire** quand
+  `check_memory_pressure` détecte que (instances actives + nouveau modèle) × marge dépasse
+  la mémoire — au lieu de charger et crasher. Logique « max d'instances » implicite : 2
+  petits modèles cohabitent s'ils tiennent, le modèle de trop est refusé. Échappatoire
+  `C3PO_FORCE=1` (ou `force=True`). `batch` force `True` (job au premier plan, sinon le pool
+  échouerait à l'init). `cmd_run`/`cmd_stats` rattrapent la `RuntimeError` et l'affichent ;
+  le serveur la renvoie en 503. Vérifié en réel : 14B (7.5 Go) actif + tentative de 7B
+  (4.4 Go) sur la 4070 → **blocage propre** (message listant l'instance concurrente), plus
+  d'OOM. On ne tue jamais les autres process (destructeur) — on bloque le nouveau.
+
+- **README** rattrapé : section **install CUDA** (compiler `llama-cpp-python` avec
+  `-DGGML_CUDA=on`, le gros manque), `serve --host`/127.0.0.1, `batch` multi-worker vs
+  séquentiel GPU + `--jobs`/`--ctx`/`--max-tokens`, `search --limit`, max_tokens auto,
+  blocage mémoire + `C3PO_FORCE`.
+
+## Phase 14 — Levier `--repeat-penalty` (anti-boucle au bon niveau) ✅
+
+Le cap `max_tokens` était un mauvais outil anti-boucle (il coupe aussi les sorties
+légitimes). Le bon levier est au *sampling* : `repeat_penalty` (défaut llama.cpp = 1.0,
+soit aucune pénalité). Exposé en `--repeat-penalty`, avec un **défaut doux à 1.1**
+(anti-répétition léger, remplace le rôle anti-loop du cap qu'on a retiré ; 1.0 = désactivé,
+~1.2-1.3 si ça boucle). `InferenceParams.repeat_penalty`, transmis par `Engine.chat`/
+`generate` à llama.cpp ; flag sur run/stats/serve/batch ; serve via
+`LLM_RUNTIME_REPEAT_PENALTY` ; affiché par `c3po stats`. Vérifié : défaut 1.1, override 1.3.
+
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 
 Le modèle **gemma4:e4b** via Ollama (blob `sha256-4c27e0f5...`, ~8.9 Go) est un GGUF valide

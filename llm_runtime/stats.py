@@ -50,6 +50,7 @@ class ModelStats:
     flash_attn: bool
     kv_type: str
     speculative: bool
+    repeat_penalty: float
 
     # Benchmark
     load_time_s: float
@@ -141,6 +142,7 @@ def collect_stats(
     flash_attn: bool | None = None,
     kv_type: str | None = None,
     speculative: bool = False,
+    repeat_penalty: float | None = None,
 ) -> ModelStats:
     """
     Charge le modèle, lit ses métadonnées et lance un benchmark de génération.
@@ -158,7 +160,7 @@ def collect_stats(
     engine = Engine(
         model_path, n_ctx=n_ctx, profile=profile,
         n_gpu_layers=n_gpu_layers, n_threads=n_threads, flash_attn=flash_attn,
-        kv_type=kv_type, speculative=speculative,
+        kv_type=kv_type, speculative=speculative, repeat_penalty=repeat_penalty,
     )
     load_time = time.time() - t0
     vram_after = _gpu_mem_used_mb()
@@ -210,6 +212,7 @@ def collect_stats(
         flash_attn=params.use_flash_attn,
         kv_type=params.kv_type,
         speculative=params.speculative,
+        repeat_penalty=params.repeat_penalty,
         load_time_s=round(load_time, 2),
         ttft_s=round(ttft, 3) if ttft is not None else None,
         gen_tps=round(gen_tps, 1) if gen_tps is not None else None,
@@ -249,6 +252,7 @@ def format_stats(s: ModelStats) -> str:
         line("flash_attn", s.flash_attn),
         line("kv_type", s.kv_type),
         line("speculative", s.speculative),
+        line("repeat_penalty", s.repeat_penalty),
         "",
         f"── Benchmark ({s.gen_tokens} tokens générés) ──",
         line("Chargement", f"{s.load_time_s} s"),

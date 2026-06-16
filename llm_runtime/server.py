@@ -53,6 +53,8 @@ def _engine_overrides_from_env() -> dict:
         out["kv_type"] = os.environ["LLM_RUNTIME_KV_TYPE"]
     if os.environ.get("LLM_RUNTIME_SPECULATIVE") == "1":
         out["speculative"] = True
+    if "LLM_RUNTIME_REPEAT_PENALTY" in os.environ:
+        out["repeat_penalty"] = float(os.environ["LLM_RUNTIME_REPEAT_PENALTY"])
     return out
 
 
