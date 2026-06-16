@@ -9,7 +9,6 @@ Cas d'usage :
 
 from __future__ import annotations
 import json
-import math
 import multiprocessing as mp
 import time
 from dataclasses import dataclass, field, asdict
@@ -152,37 +151,13 @@ def tasks_from_prompts(prompts: list[str]) -> list[BatchTask]:
 
 def optimal_jobs(model_path: str | Path, n_ctx: int = 2048) -> int:
     """
-    Calcule combien d'instances parallèles on peut lancer
-    en fonction de la mémoire disponible, de la taille du modèle
-    et du KV cache (qui croît avec n_ctx).
+    Retourne le nombre de workers batch par défaut.
+
+    c3po suit désormais une politique mono-instance : un seul modèle chargé à la
+    fois, les tâches batch passent en file. Cela évite les copies multiples du
+    modèle en mémoire et rend le comportement identique sur Metal, CUDA et CPU.
     """
-    from llm_runtime.hardware import Backend, detect_hardware
-
-    profile = detect_hardware()
-
-    # Sur GPU Nvidia : VRAM dédiée et limitée, et le GPU sérialise les kernels.
-    # Plusieurs workers = N copies du modèle en VRAM (risque d'OOM) sans gain de débit.
-    # On reste donc à 1 instance (override possible via --jobs).
-    if profile.backend == Backend.CUDA:
-        return 1
-
-    model_size_gb = Path(model_path).stat().st_size / (1024 ** 3)
-    available = profile.gpu_memory_gb
-
-    # Estimation approximative de l'overhead KV cache par instance.
-    # Le calcul exact dépendrait des métadonnées du modèle (nb de couches,
-    # dimension d'embedding) ; on prend une heuristique simple proportionnelle à n_ctx.
-    kv_overhead_gb = (n_ctx / 4096) * 1.0
-
-    # Chaque instance a besoin de la taille du modèle (+ marge) + KV cache
-    from llm_runtime.models import FIT_MARGIN
-    memory_per_instance = model_size_gb * FIT_MARGIN + kv_overhead_gb
-    jobs = max(1, math.floor(available / memory_per_instance))
-
-    # Plafond raisonnable : pas plus de cores physiques / 2
-    jobs = min(jobs, max(1, profile.cpu_cores // 2))
-
-    return jobs
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +202,9 @@ def run_batch(
         print(f"Validation du modèle {Path(model_path).name}…")
     _validate_model(model_path)
 
-    if jobs is None:
-        jobs = optimal_jobs(model_path, n_ctx=n_ctx)
+    if jobs not in (None, 1) and verbose:
+        print("Architecture mono-instance : --jobs est ignoré, utilisation de 1 worker.")
+    jobs = 1
 
     if verbose:
         print(f"Batch : {len(tasks)} tâches — {jobs} worker(s) — modèle : {Path(model_path).name}")

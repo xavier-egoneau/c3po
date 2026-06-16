@@ -447,6 +447,8 @@ cette carte.
   le serveur la renvoie en 503. Vérifié en réel : 14B (7.5 Go) actif + tentative de 7B
   (4.4 Go) sur la 4070 → **blocage propre** (message listant l'instance concurrente), plus
   d'OOM. On ne tue jamais les autres process (destructeur) — on bloque le nouveau.
+  **Remplacé en Phase 15** par une politique mono-instance plus simple : un nouveau lancement
+  termine les anciennes instances c3po avant de charger son modèle.
 
 - **README** rattrapé : section **install CUDA** (compiler `llama-cpp-python` avec
   `-DGGML_CUDA=on`, le gros manque), `serve --host`/127.0.0.1, `batch` multi-worker vs
@@ -462,6 +464,63 @@ soit aucune pénalité). Exposé en `--repeat-penalty`, avec un **défaut doux �
 ~1.2-1.3 si ça boucle). `InferenceParams.repeat_penalty`, transmis par `Engine.chat`/
 `generate` à llama.cpp ; flag sur run/stats/serve/batch ; serve via
 `LLM_RUNTIME_REPEAT_PENALTY` ; affiché par `c3po stats`. Vérifié : défaut 1.1, override 1.3.
+
+## Phase 15 — Politique mono-instance + compaction du chat ✅
+
+Décision produit : aller au bout de la philosophie **simple et robuste**. c3po n'essaie plus
+de calculer combien d'instances concurrentes peuvent cohabiter. Les commandes qui chargent
+un modèle (`run`, `serve`, `stats`, `batch`) appellent `terminate_other_instances()` avant de
+démarrer : les autres process c3po enregistrés reçoivent `SIGTERM`, puis `SIGKILL` s'ils ne
+sortent pas rapidement. Objectif : un seul gros modèle vivant, pas de calcul mémoire faussé
+par des sessions oubliées, moins de risques d'OOM.
+
+Conséquences :
+- **Batch mono-instance** : `optimal_jobs()` retourne toujours 1 ; `--jobs` est conservé en
+  compatibilité mais ignoré. Les tâches passent en file derrière une seule instance modèle.
+  On ne multiplie pas le tok/s brut, mais on évite N copies du modèle en VRAM/RAM.
+- **Serveur / run / stats** : un lancement neuf nettoie les instances précédentes au lieu de
+  bloquer ou de demander à l'utilisateur de fermer manuellement l'ancienne session.
+- **Import CLI propre** : `llm_runtime.__init__` n'importe plus `llm_runtime.cli` eager ; le
+  wrapper `cli_main()` est lazy, ce qui supprime le warning `python -m llm_runtime.cli`.
+
+Compaction automatique du chat interactif (`c3po run`) :
+- seuil = **95 % du `n_ctx` réellement appliqué** par l'Engine (après plafonnement du modèle
+  ou réduction mémoire) ;
+- quand l'historique estimé dépasse le seuil, c3po demande au modèle de résumer l'ancien
+  historique en un message `system`, puis conserve les derniers messages bruts ;
+- but : permettre un travail long même avec une petite fenêtre de contexte, sans atteindre
+  la fin du contexte et sans couper artificiellement via `max_tokens`.
+
+Portée volontaire : la compaction est côté CLI interactive. Le serveur OpenAI-compatible ne
+compacte pas silencieusement les historiques reçus : côté API, le client reste propriétaire
+de sa mémoire conversationnelle.
+
+## Axe futur — Serveur d'inférence avec batching/slots
+
+Décision actuelle : rester sur une architecture **simple et robuste**. c3po charge un seul
+modèle vivant à la fois et exécute les générations de façon séquentielle derrière ce modèle.
+C'est cohérent avec l'objectif du projet : local, explicite, prévisible, avec peu de magie.
+
+Option à explorer plus tard si le besoin devient réel : une architecture de **serveur
+d'inférence** avec scheduler, slots de contexte et batching continu (façon llama.cpp server,
+vLLM, etc.). L'idée ne serait pas de charger plusieurs copies du même modèle, mais de faire
+avancer plusieurs requêtes simultanées par petits morceaux avec une seule instance moteur.
+
+Enjeux clarifiés :
+- **Qualité** : pas de gain attendu. À modèle, prompt et paramètres identiques, le batching
+  ne rend pas la réponse meilleure ; il organise seulement plusieurs requêtes.
+- **Temps / débit** : gain possible surtout sous concurrence réelle (plusieurs utilisateurs,
+  agents ou petites requêtes simultanées), car le GPU peut être mieux rempli. Pour une seule
+  conversation locale, le gain est faible ou nul.
+- **Latence** : une requête individuelle n'est pas forcément plus rapide ; le vrai bénéfice
+  est plutôt le débit total (tokens/s agrégés sur plusieurs requêtes).
+- **Coût d'architecture** : scheduler, file de requêtes, annulation, timeouts, streaming par
+  client, isolation des conversations et gestion séparée du KV cache par slot. C'est une
+  autre couche de runtime, pas juste un verrou ou quelques threads autour de `Engine.chat()`.
+
+Conclusion provisoire : ne pas implémenter maintenant. À reconsidérer seulement si c3po
+devient un service multi-clients ou multi-agents où le throughput concurrent justifie cette
+complexité.
 
 ## Problème résolu — Gemma 3n (gemma4) non chargeable
 

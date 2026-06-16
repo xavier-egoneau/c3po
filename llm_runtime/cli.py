@@ -18,6 +18,22 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
+# Politique d'instance unique
+# ---------------------------------------------------------------------------
+
+def _terminate_other_instances_before_start() -> None:
+    """Ferme les autres modèles c3po déjà chargés avant de démarrer celui-ci."""
+    from .instances import terminate_other_instances
+
+    stopped = terminate_other_instances()
+    if stopped:
+        print("Instances c3po existantes arrêtées :")
+        for i in stopped:
+            print(f"  - PID {i['pid']} : {i['model']} (~{i['size_gb']:.1f} Go)")
+        print()
+
+
+# ---------------------------------------------------------------------------
 # Commandes
 # ---------------------------------------------------------------------------
 
@@ -80,6 +96,8 @@ def cmd_run(args):
     if model_path is None:
         return
 
+    _terminate_other_instances_before_start()
+
     print(f"Chargement de {model_path.name}…")
     try:
         engine = Engine(model_path, n_ctx=args.ctx, **_engine_overrides(args))
@@ -104,6 +122,7 @@ def cmd_run(args):
                 break
 
             history.append({"role": "user", "content": user_input})
+            history = _maybe_compact_history(engine, history)
 
             print("Assistant : ", end="", flush=True)
             full_response = ""
@@ -136,6 +155,8 @@ def cmd_batch(args):
     model_path = _resolve_model(args.model)
     if model_path is None:
         return
+
+    _terminate_other_instances_before_start()
 
     # Construction des tâches
     tasks = []
@@ -239,6 +260,8 @@ def cmd_stats(args):
     if model_path is None:
         return
 
+    _terminate_other_instances_before_start()
+
     print(f"Chargement et benchmark de {model_path.name}… (quelques secondes)")
     try:
         stats = collect_stats(model_path, n_ctx=args.ctx, **_engine_overrides(args))
@@ -261,6 +284,8 @@ def cmd_serve(args):
     import subprocess
 
     model_path = _resolve_model(args.model) if args.model else None
+
+    _terminate_other_instances_before_start()
 
     env = os.environ.copy()
     if model_path:
@@ -299,6 +324,101 @@ def cmd_serve(args):
         subprocess.run(cmd, env=env)
     except KeyboardInterrupt:
         print("\nServeur arrêté.")
+
+
+# ---------------------------------------------------------------------------
+# Compaction de conversation interactive
+# ---------------------------------------------------------------------------
+
+_COMPACTION_RATIO = 0.95
+_COMPACTION_KEEP_MESSAGES = 4
+
+
+def _maybe_compact_history(engine, history: list[dict]) -> list[dict]:
+    """
+    Compacte l'historique interactif quand il approche de la fenêtre de contexte.
+
+    Le seuil est calculé sur le `n_ctx` réellement appliqué par l'Engine, donc après
+    plafonnement éventuel par le modèle ou réduction mémoire.
+    """
+    limit = max(1, int(engine.params.n_ctx * _COMPACTION_RATIO))
+    try:
+        tokens = engine.count_messages_tokens(history)
+    except Exception:
+        return history
+
+    if tokens < limit:
+        return history
+
+    compacted = _compact_history(engine, history, limit)
+    if compacted is history:
+        print(
+            f"\n[Compaction impossible : le dernier message occupe déjà ~{tokens}/{engine.params.n_ctx} tokens.]"
+        )
+        return history
+
+    after = engine.count_messages_tokens(compacted)
+    print(
+        f"\n[Historique compacté : ~{tokens} → ~{after} tokens "
+        f"(seuil {limit}/{engine.params.n_ctx}).]"
+    )
+    return compacted
+
+
+def _compact_history(engine, history: list[dict], token_limit: int) -> list[dict]:
+    if len(history) <= 1:
+        return history
+
+    keep_count = min(_COMPACTION_KEEP_MESSAGES, max(1, len(history) - 1))
+    old = history[:-keep_count]
+    tail = history[-keep_count:]
+    if not old:
+        return history
+
+    transcript = _render_transcript(old)
+    max_summary_tokens = max(128, min(512, engine.params.n_ctx // 8))
+    summary_prompt = [
+        {
+            "role": "system",
+            "content": (
+                "Tu compactes une conversation pour permettre de continuer longtemps. "
+                "Conserve seulement les informations utiles pour la suite : objectifs, "
+                "décisions, contraintes, fichiers, bugs, commandes importantes, préférences. "
+                "Réponds uniquement par un résumé structuré et concis."
+            ),
+        },
+        {"role": "user", "content": transcript},
+    ]
+    result = engine.chat(
+        summary_prompt,
+        max_tokens=max_summary_tokens,
+        temperature=0.0,
+        stream=False,
+    )
+    summary = result["choices"][0]["message"]["content"].strip()
+    compacted = [
+        {
+            "role": "system",
+            "content": "Résumé compacté de la conversation précédente :\n" + summary,
+        },
+        *tail,
+    ]
+
+    # Si les derniers messages sont eux-mêmes trop gros, on réduit progressivement
+    # le contexte brut conservé. On ne supprime jamais le dernier message utilisateur.
+    while len(compacted) > 2 and engine.count_messages_tokens(compacted) >= token_limit:
+        compacted.pop(1)
+
+    return compacted
+
+
+def _render_transcript(messages: list[dict]) -> str:
+    lines = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        lines.append(f"{role.upper()}:\n{content}")
+    return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument("--output", metavar="FICHIER",
                          help="Fichier JSON de sortie (ex: results.json)")
     p_batch.add_argument("--jobs", type=int, default=None,
-                         help="Nombre de workers parallèles (auto si omis)")
+                         help="Compatibilité seulement : ignoré, le batch est mono-instance")
     p_batch.add_argument("--max-tokens", type=int, default=None, dest="max_tokens",
                          help="Limite de tokens par tâche (auto si omis : jusqu'à la fin "
                               "de la réponse ou la limite de contexte)")

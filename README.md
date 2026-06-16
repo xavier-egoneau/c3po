@@ -47,6 +47,7 @@ c3po stats <modèle>
 
 # Chat interactif
 c3po run <modèle>
+# L'historique est compacté automatiquement quand il approche 95% du contexte du modèle.
 
 # Leviers d'inférence exposés (sinon auto-calculés selon le hardware) — sur run/stats/serve/batch
 c3po run <modèle> --ctx 8192 --n-gpu-layers 20 --threads 6 --no-flash-attn
@@ -65,9 +66,9 @@ c3po run <modèle> --repeat-penalty 1.3
 # Écoute sur 127.0.0.1 par défaut ; --host 0.0.0.0 pour exposer sur le réseau (sans auth !)
 c3po serve [<modèle>] [--port 8000] [--host 127.0.0.1]
 
-# Traitement batch (multi-worker sur CPU/Metal, séquentiel sur GPU Nvidia mono-carte)
+# Traitement batch (file séquentielle sur une seule instance modèle)
 c3po batch <modèle> --input fichier1.txt fichier2.txt --prompt "Résume : {content}" \
-    --output results.json [--jobs N] [--ctx 2048] [--max-tokens N]
+    --output results.json [--ctx 2048] [--max-tokens N]
 ```
 
 Par défaut, `run`/`serve`/`batch` génèrent jusqu'à la fin de la réponse (ou la limite de
@@ -77,8 +78,9 @@ Les modèles téléchargés via `c3po load` vont dans `~/.c3po/models` (surcharg
 `C3PO_MODELS_DIR`). Vous pouvez aussi déposer des `.gguf` dans `./models/` (non versionnés,
 voir `.gitignore`) — les deux dossiers sont scannés.
 
-Lancer un modèle qui ferait dépasser la mémoire disponible (en tenant compte des instances
-c3po déjà actives) est **bloqué** avec un message clair ; forcer avec `C3PO_FORCE=1`.
+Les commandes qui chargent un modèle (`run`, `serve`, `stats`, `batch`) arrêtent d'abord les
+autres instances c3po actives. Le projet privilégie une seule instance modèle vivante à la fois :
+moins de copies en VRAM/RAM, calculs mémoire plus prévisibles, moins de risques d'OOM.
 
 ## Développement
 

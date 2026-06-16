@@ -189,6 +189,29 @@ class Engine:
             stream=stream,
         )
 
+    def count_text_tokens(self, text: str) -> int:
+        """Estime le nombre de tokens d'un texte avec le tokenizer du modèle chargé."""
+        try:
+            return len(self._llm.tokenize(text.encode("utf-8"), add_bos=False))
+        except TypeError:
+            return len(self._llm.tokenize(text.encode("utf-8")))
+        except Exception:
+            # Repli grossier : utile pour les tests/mocks, pas pour piloter la prod.
+            return max(1, len(text) // 4)
+
+    def count_messages_tokens(self, messages: list[dict[str, Any]]) -> int:
+        """
+        Estime la place prise par une liste de messages de chat.
+
+        On ne matérialise pas le chat template exact de chaque modèle ; cette estimation
+        sert de garde-fou pour compacter avant d'approcher la limite de contexte.
+        """
+        rendered = "\n".join(
+            f"<{m.get('role', 'user')}>\n{m.get('content', '')}\n</{m.get('role', 'user')}>"
+            for m in messages
+        )
+        return self.count_text_tokens(rendered)
+
     def __repr__(self) -> str:
         return (
             f"Engine(\n"

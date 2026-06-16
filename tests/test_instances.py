@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 
 import llm_runtime.instances as instances
 
@@ -69,3 +70,55 @@ def test_check_memory_pressure_exceeded(tmp_path, monkeypatch):
 
     assert warning is not None
     assert "other.gguf" in warning
+
+
+def test_terminate_other_instances_sends_sigterm(tmp_path, monkeypatch):
+    monkeypatch.setattr(instances, "LOCK_DIR", tmp_path)
+
+    pid = os.getppid()
+    (tmp_path / f"{pid}.json").write_text(json.dumps({
+        "pid": pid,
+        "model": "other.gguf",
+        "size_gb": 4.0,
+        "started_at": 0,
+    }))
+
+    sent = []
+
+    def fake_kill(target_pid, sig):
+        if sig == 0:
+            return
+        sent.append((target_pid, sig))
+
+    monkeypatch.setattr(instances.os, "kill", fake_kill)
+
+    stopped = instances.terminate_other_instances(timeout_s=0)
+
+    assert stopped[0]["pid"] == pid
+    assert (pid, signal.SIGTERM) in sent
+
+
+def test_terminate_other_instances_escalates_to_sigkill(tmp_path, monkeypatch):
+    monkeypatch.setattr(instances, "LOCK_DIR", tmp_path)
+
+    pid = os.getppid()
+    (tmp_path / f"{pid}.json").write_text(json.dumps({
+        "pid": pid,
+        "model": "stubborn.gguf",
+        "size_gb": 4.0,
+        "started_at": 0,
+    }))
+
+    sent = []
+
+    def fake_kill(target_pid, sig):
+        if sig == 0:
+            return
+        sent.append((target_pid, sig))
+
+    monkeypatch.setattr(instances.os, "kill", fake_kill)
+
+    instances.terminate_other_instances(timeout_s=0)
+
+    assert (pid, signal.SIGTERM) in sent
+    assert (pid, signal.SIGKILL) in sent
