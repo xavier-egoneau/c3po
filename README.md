@@ -33,6 +33,10 @@ c3po list
 # Affiche le profil hardware et les paramètres d'inférence calculés
 c3po info
 
+# Diagnostique l'installation (llama-cpp-python, backend GPU) et, optionnellement, un modèle
+c3po doctor
+c3po doctor <modèle>
+
 # Cherche sur Hugging Face les modèles GGUF qui tiennent dans ta VRAM
 c3po search qwen2.5            # éligibles seulement
 c3po search "llama 3" --all   # tout, avec colonne FIT
@@ -78,9 +82,18 @@ Les modèles téléchargés via `c3po load` vont dans `~/.c3po/models` (surcharg
 `C3PO_MODELS_DIR`). Vous pouvez aussi déposer des `.gguf` dans `./models/` (non versionnés,
 voir `.gitignore`) — les deux dossiers sont scannés.
 
+Les GGUF exportés par Unsloth ou convertis depuis un fine-tune sont utilisables directement si
+leur architecture est supportée par la version de `llama.cpp` embarquée dans
+`llama-cpp-python`. En cas de doute : `c3po doctor <modèle>` inspecte l'environnement, le
+backend GPU, l'en-tête GGUF et signale les projecteurs multimodaux `mmproj`.
+
 Les commandes qui chargent un modèle (`run`, `serve`, `stats`, `batch`) arrêtent d'abord les
 autres instances c3po actives. Le projet privilégie une seule instance modèle vivante à la fois :
 moins de copies en VRAM/RAM, calculs mémoire plus prévisibles, moins de risques d'OOM.
+
+Aujourd'hui c3po sert d'abord les modèles texte GGUF. Le multimodal n'est pas exclu du projet :
+il demande une extension dédiée (téléchargement/association des `mmproj`, messages image/audio,
+budget contexte multimodal, backend `libmtmd` ou délégation à `llama-server`).
 
 ## Développement
 

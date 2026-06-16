@@ -3,6 +3,7 @@ from .params import compute_params, InferenceParams
 from .engine import Engine
 from .models import list_models, best_model, ModelInfo
 from .batch import run_batch, tasks_from_files, tasks_from_prompts, BatchSummary
+from .doctor import collect_doctor, DoctorReport
 
 
 def cli_main():
@@ -15,6 +16,7 @@ __all__ = [
     "compute_params", "InferenceParams",
     "Engine",
     "list_models", "best_model", "ModelInfo",
+    "collect_doctor", "DoctorReport",
     "cli_main",
     "run_batch", "tasks_from_files", "tasks_from_prompts", "BatchSummary",
 ]

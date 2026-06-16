@@ -4,6 +4,7 @@ CLI c3po — interface en ligne de commande pour llm-runtime.
 Usage:
   c3po list
   c3po info
+  c3po doctor [<model>]
   c3po search <query>
   c3po load <user/repo>[:QUANT]
   c3po run <model>
@@ -85,6 +86,13 @@ def cmd_info(args):
     print()
     print("── Paramètres d'inférence calculés ──────")
     print(params)
+
+
+def cmd_doctor(args):
+    """Diagnostique l'environnement c3po et éventuellement un modèle."""
+    from .doctor import collect_doctor, format_doctor
+
+    print(format_doctor(collect_doctor(args.model)))
 
 
 def cmd_run(args):
@@ -501,6 +509,11 @@ def build_parser() -> argparse.ArgumentParser:
     # info
     sub.add_parser("info", help="Affiche le profil hardware et les paramètres calculés")
 
+    # doctor
+    p_doctor = sub.add_parser("doctor", help="Diagnostique l'installation et un modèle")
+    p_doctor.add_argument("model", nargs="?", default=None,
+                          help="Nom ou chemin du modèle à inspecter")
+
     # run
     p_run = sub.add_parser("run", help="Lance une session de chat interactive")
     p_run.add_argument("model", nargs="?", default=None,
@@ -570,6 +583,7 @@ def main():
     dispatch = {
         "list":   cmd_list,
         "info":   cmd_info,
+        "doctor": cmd_doctor,
         "search": cmd_search,
         "load":   cmd_load,
         "run":    cmd_run,

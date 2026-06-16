@@ -495,6 +495,32 @@ Portée volontaire : la compaction est côté CLI interactive. Le serveur OpenAI
 compacte pas silencieusement les historiques reçus : côté API, le client reste propriétaire
 de sa mémoire conversationnelle.
 
+## Phase 16 — `c3po doctor`, compatibilité modèles et position multimodale ✅
+
+Point clarifié : la limite « texte seulement » n'est pas une volonté produit définitive, mais
+un manque actuel. c3po doit rester capable d'évoluer vers les modèles multimodaux dès que le
+backend et l'API locale sont prêts.
+
+- **Compatibilité modèles GGUF** : c3po peut exécuter les GGUF exportés par Unsloth ou
+  convertis depuis un fine-tune tant que l'architecture est supportée par la version de
+  `llama.cpp` embarquée dans `llama-cpp-python`. Le support « tous les modèles » n'est pas
+  réaliste côté orchestrateur ; l'objectif pratique est « la plupart des GGUF supportés par
+  une version récente de llama.cpp ».
+- **`c3po doctor [modèle]`** (`doctor.py`, nouveau) : diagnostic non destructif, sans charger
+  le modèle. Affiche Python, plateforme, hardware détecté, présence/version de
+  `llama-cpp-python`, support offload GPU si exposé, puis métadonnées GGUF du modèle
+  (`architecture`, contexte, couches, embedding, têtes, têtes KV). Signale aussi les
+  `mmproj*.gguf` présents à côté du modèle.
+- **Unsloth** : les modèles fine-tunés/exportés en GGUF par Unsloth entrent naturellement
+  dans le pipeline c3po (`c3po run ./modele.gguf` ou `c3po load user/repo-GGUF:Q4_K_M`).
+  `doctor` sert à distinguer problème d'environnement, fichier GGUF illisible, arch trop
+  récente pour `llama-cpp-python`, ou besoin multimodal non encore implémenté.
+- **Multimodal futur** : à implémenter comme extension explicite, pas comme hack autour du
+  chat texte. Besoins identifiés : télécharger/associer le projecteur `mmproj`, représenter
+  un modèle multimodal comme paire `texte.gguf + mmproj.gguf`, accepter les messages
+  image/audio côté CLI/API, budgéter le contexte multimodal, et s'appuyer soit sur
+  `llama.cpp/libmtmd` via Python si disponible, soit sur un `llama-server` externe récent.
+
 ## Axe futur — Serveur d'inférence avec batching/slots
 
 Décision actuelle : rester sur une architecture **simple et robuste**. c3po charge un seul
