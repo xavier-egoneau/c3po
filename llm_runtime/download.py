@@ -92,6 +92,29 @@ def has_mmproj(files: list[GGUFFile]) -> bool:
     return any(_is_mmproj(Path(f.path).name) for f in files if f.path.endswith(".gguf"))
 
 
+def select_mmproj(files: list[GGUFFile]) -> GGUFFile | None:
+    """
+    Choisit un projecteur multimodal à télécharger.
+
+    On préfère BF16/F16 (bonne qualité, taille raisonnable) puis Q8_0, puis F32 en dernier
+    recours. Le runtime multimodal n'est pas encore branché ; ceci prépare seulement les
+    assets nécessaires.
+    """
+    candidates = [
+        f for f in files
+        if f.path.endswith(".gguf") and _is_mmproj(Path(f.path).name)
+    ]
+    if not candidates:
+        return None
+    preference = {"BF16": 0, "F16": 1, "Q8_0": 2, "F32": 3}
+
+    def key(f: GGUFFile) -> tuple[int, int, str]:
+        quant = _parse_quant(Path(f.path).name) or ""
+        return (preference.get(quant, 99), f.size, f.path)
+
+    return sorted(candidates, key=key)[0]
+
+
 def group_by_quant(files: list[GGUFFile]) -> dict[str, QuantOption]:
     """
     Regroupe les .gguf en options téléchargeables.
@@ -312,7 +335,12 @@ def _sha256(path: Path) -> str:
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def load(ref: str, quant: str | None = None, dest_dir: str | Path | None = None) -> Path:
+def load(
+    ref: str,
+    quant: str | None = None,
+    dest_dir: str | Path | None = None,
+    include_mmproj: bool = False,
+) -> Path:
     """
     Télécharge un modèle GGUF depuis Hugging Face et retourne le chemin local
     du fichier principal (le 1er shard pour un modèle splitté).
@@ -325,10 +353,17 @@ def load(ref: str, quant: str | None = None, dest_dir: str | Path | None = None)
     files = fetch_gguf_files(repo)
     options = group_by_quant(files)
 
-    if has_mmproj(files):
+    mmproj = select_mmproj(files)
+    if mmproj and include_mmproj:
         print(
-            "⚠ Modèle multimodal (mmproj détecté). c3po ne télécharge et ne sert que la "
-            "partie texte — la vision/audio n'est pas supportée.",
+            f"Projecteur multimodal : {Path(mmproj.path).name} "
+            f"({mmproj.size / 1024**3:.1f} Go)",
+            file=sys.stderr,
+        )
+    elif mmproj:
+        print(
+            "⚠ Modèle multimodal (mmproj détecté). Ajoutez --mmproj pour télécharger "
+            "aussi le projecteur. Le runtime image/audio n'est pas encore branché.",
             file=sys.stderr,
         )
 
@@ -347,6 +382,8 @@ def load(ref: str, quant: str | None = None, dest_dir: str | Path | None = None)
 
     for f in option.files:
         _download_one(repo, f, dest / Path(f.path).name)
+    if include_mmproj and mmproj:
+        _download_one(repo, mmproj, dest / Path(mmproj.path).name)
 
     main_file = dest / Path(option.files[0].path).name
     print(f"✓ {main_file}")

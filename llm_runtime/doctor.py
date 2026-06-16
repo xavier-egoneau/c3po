@@ -19,6 +19,16 @@ from .hardware import Backend, detect_hardware
 from .models import find_model
 
 
+_MULTIMODAL_ARCHES = {
+    "gemma3",
+    "gemma4",
+    "llava",
+    "mllama",
+    "qwen2vl",
+    "qwen2_5_vl",
+}
+
+
 @dataclass
 class DoctorReport:
     python: str
@@ -194,7 +204,7 @@ def _inspect_model(report: DoctorReport, model_query: str) -> None:
         )
 
     path = Path(info.path)
-    report.mmproj_files = sorted(p.name for p in path.parent.glob("*mmproj*.gguf"))
+    report.mmproj_files = _associated_mmproj_files(path, report.arch)
     if report.mmproj_files:
         report.warnings.append(
             "Projecteur multimodal mmproj détecté à côté du modèle. c3po ne sert pas "
@@ -212,6 +222,20 @@ def _inspect_model(report: DoctorReport, model_query: str) -> None:
             "Si ce modèle échoue au chargement malgré un GGUF valide, mets à jour "
             "llama-cpp-python ou rebuild depuis une version récente de llama.cpp."
         )
+
+
+def _associated_mmproj_files(model_path: Path, arch: str | None) -> list[str]:
+    model_key = model_path.stem.lower()
+    mmprojs = sorted(model_path.parent.glob("*mmproj*.gguf"))
+    associated = [
+        p.name for p in mmprojs
+        if model_key in p.stem.lower() or p.stem.lower() in model_key
+    ]
+    if associated:
+        return associated
+    if arch and arch.lower() in _MULTIMODAL_ARCHES:
+        return [p.name for p in mmprojs]
+    return []
 
 
 def format_doctor(report: DoctorReport) -> str:

@@ -574,6 +574,108 @@ Les anciens champs JSON `ttft_s` / `gen_tps` / `gen_tokens` restent alignés sur
   `models.py` pour représenter explicitement `texte.gguf + mmproj.gguf` et signaler
   `mmproj trouvé/manquant/backend indisponible`.
 
+## Axe stratégique — `c3po-agent` au-dessus de `c3po-core`
+
+Clarification importante : l'objectif n'est pas forcément que l'outil agentique final appelle
+directement `c3po-core`. Il pourra appeler **Codex**, **Claude**, **Ollama** ou
+**c3po-agent**. `c3po-agent` serait une couche d'adaptation agentique locale qui appelle
+ensuite `c3po-core`.
+
+Architecture cible :
+```
+[outil agentique final]
+  - objectif produit
+  - UX
+  - permissions globales
+  - mémoire métier
+  - workflows haut niveau
+       ↓
+[c3po-agent]
+  - adaptation agentique des modèles locaux
+  - tool calling émulé ou normalisé
+  - structured outputs + validation/retry
+  - state machine locale pour sous-tâches cadrées
+  - evaluator léger
+  - prompts/scaffolding pour petits modèles
+       ↓
+[c3po-core]
+  - inférence locale GGUF
+  - hardware/routing/params
+  - stats/doctor/bench
+  - streaming/API stable
+  - stabilité contexte/VRAM
+```
+
+Boussole :
+> `c3po-agent` augmente la substituabilité des modèles locaux dans un outil agentique,
+> sans capturer la logique produit de cet outil.
+
+Délimitation des responsabilités :
+- L'outil agentique final décide : objectif utilisateur, stratégie produit, UX, permissions,
+  mémoire métier, choix Codex/Claude/local, et workflows haut niveau.
+- `c3po-agent` décide localement : comment obtenir une réponse structurée fiable d'un petit
+  modèle, quand retry, comment valider, comment transformer une intention outil en JSON
+  utilisable, comment découper une sous-tâche locale.
+- `c3po-core` ne devient pas agentique : il sert les modèles locaux de façon compatible,
+  observable et robuste.
+
+Pourquoi cette couche existe : un modèle frontier a souvent déjà de meilleures capacités
+implicites (instruction following, tool calling, structured outputs, planification, long
+contexte). Un petit modèle local a besoin de plus d'échafaudage pour être utile dans le même
+outil agentique. `c3po-agent` est cet échafaudage, à mesurer avec un harnais prompt/eval avant
+de le promouvoir comme API stable.
+
+## Phase 19 — Spike Gemma 4 E2B QAT + préparation `mmproj` ✅
+
+Objectif : vérifier un candidat de sidecar vision léger sans passer par Ollama.
+
+- Recherche HF : `unsloth/gemma-4-E2B-it-qat-GGUF` expose un modèle principal
+  `gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf` (~2.4 Go) et des projecteurs `mmproj`
+  (`mmproj-BF16.gguf` ~0.9 Go).
+- `c3po load unsloth/gemma-4-E2B-it-qat-GGUF:Q4_K_XL` télécharge le modèle principal.
+- Nouveau flag `c3po load --mmproj` : télécharge aussi le projecteur multimodal choisi
+  (préférence BF16/F16, puis Q8_0, puis F32). Le runtime image/audio n'est pas encore branché.
+- `models.py` exclut les `mmproj*.gguf` de `c3po list` et regroupe les shards locaux :
+  le 14B shardé redevient un seul modèle logique (~8.4 Go) résolu par `find_model("14b")`.
+- `doctor` affiche le `mmproj` associé pour les architectures multimodales connues, sans
+  l'attacher à tort aux modèles texte placés dans le même dossier global.
+
+Validation réelle sur RTX 4070 / `llama-cpp-python 0.3.29` :
+- `c3po doctor gemma-4-E2B-it-qat-UD-Q4_K_XL` → architecture `gemma4`, contexte 131072,
+  couches 35, embedding 1536, têtes KV 1, `mmproj-BF16.gguf` détecté après download.
+- `c3po stats gemma-4-E2B-it-qat-UD-Q4_K_XL --ctx 4096` charge correctement la partie texte :
+  ~1.5 s chargement, ~2.0 Go VRAM, ~176 tok/s en general et ~178 tok/s en code.
+
+Conclusion : Gemma 4 E2B QAT est un bon candidat pour `c3po-agent` côté sidecar vision,
+mais la prochaine étape reste le branchement multimodal propre (`image -> observation
+structurée`) via c3po-core/libmtmd ou backend llama.cpp compatible, sans dépendance Ollama.
+
+## Phase 20 — Primitive vision Gemma 4 via MTMD ✅
+
+Primitive expérimentale ajoutée : `agent/vision/gemma4.py`.
+Wrapper CLI : `experiments/vision_gemma4.py`.
+
+But : vérifier le chemin réel `image -> observation structurée` avec Gemma 4 E2B + `mmproj`,
+sans intégrer encore cette capacité à l'API stable.
+
+Implémentation :
+- `observe_image(...)` charge le modèle Gemma 4 via `llama_cpp.Llama` ;
+- branche `llama_cpp.llama_chat_format.Gemma4ChatHandler(clip_model_path=mmproj)` ;
+- `vision_messages(...)` envoie l'image en `data:image/...;base64,...` dans un message OpenAI-style
+  `content: [{type: image_url}, {type: text}]` ;
+- demande une observation JSON (`caption`, `ocr`, `objects`, `layout`, `uncertainties`).
+
+Validation réelle :
+- image PNG synthétique rouge/bleu générée en stdlib ;
+- `python3 experiments/vision_gemma4.py /tmp/c3po-red-blue.png --max-tokens 256` ;
+- sortie JSON correcte : description de deux bandes rouge/bleue, `ocr: []`, objets détectés ;
+- logs MTMD visibles sur stderr (`encoding image slice`, `image decoded`) — acceptable pour
+  le spike, à canaliser plus tard si intégré.
+
+Conclusion : la stack locale `llama-cpp-python 0.3.29` + `Gemma4ChatHandler` + `mmproj-BF16`
+permet déjà un sidecar vision c3po. Prochaine étape côté `c3po-agent` : encapsuler cette
+observation dans une primitive expérimentale, puis l'envoyer au modèle texte principal.
+
 ## Axe futur — Serveur d'inférence avec batching/slots
 
 Décision actuelle : rester sur une architecture **simple et robuste**. c3po charge un seul

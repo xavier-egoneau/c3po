@@ -6,6 +6,7 @@ qu'ils viennent d'Ollama ou de fichiers locaux.
 from __future__ import annotations
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,7 @@ OLLAMA_BLOBS     = Path.home() / ".ollama" / "models" / "blobs"
 # (poids + KV cache + overhead d'allocation). Source de vérité partagée par
 # fits_in / best_model / optimal_jobs / check_memory_pressure / download.
 FIT_MARGIN = 1.15
+_SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})$", re.IGNORECASE)
 
 
 def models_dir() -> Path:
@@ -34,6 +36,11 @@ def _default_local_dirs() -> list[Path]:
     (~/.c3po/models) plus ./models dans le répertoire courant (compat / pratique).
     """
     return [models_dir(), Path("models")]
+
+
+def is_mmproj_path(path: str | Path) -> bool:
+    """Un projecteur multimodal n'est pas un modèle texte lançable seul."""
+    return "mmproj" in Path(path).name.lower()
 
 # Type MIME du blob qui contient les poids du modèle
 OLLAMA_MODEL_MEDIA_TYPE = "application/vnd.ollama.image.model"
@@ -124,14 +131,27 @@ def _scan_local(directories: list[Path]) -> list[ModelInfo]:
     for directory in directories:
         if not directory.exists():
             continue
+        grouped: dict[str, dict] = {}
         for gguf_path in directory.rglob("*.gguf"):
-            size_gb = gguf_path.stat().st_size / (1024 ** 3)
-            models.append(ModelInfo(
-                name=gguf_path.stem,
-                path=gguf_path,
-                size_gb=size_gb,
-                source="local",
-            ))
+            if is_mmproj_path(gguf_path):
+                continue
+            stem = gguf_path.stem
+            m = _SHARD_RE.search(stem)
+            if m:
+                base = stem[: m.start()] + stem[m.end():]
+                grouped.setdefault(base, {"shards": [], "single": None})["shards"].append(gguf_path)
+            else:
+                grouped.setdefault(stem, {"shards": [], "single": None})["single"] = gguf_path
+
+        for name, parts in grouped.items():
+            if parts["shards"]:
+                paths = sorted(parts["shards"])
+                path = paths[0]
+                size_gb = sum(p.stat().st_size for p in paths) / (1024 ** 3)
+            else:
+                path = parts["single"]
+                size_gb = path.stat().st_size / (1024 ** 3)
+            models.append(ModelInfo(name=name, path=path, size_gb=size_gb, source="local"))
     return models
 
 

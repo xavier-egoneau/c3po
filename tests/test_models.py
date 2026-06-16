@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from llm_runtime.models import ModelInfo, find_model, list_models, best_model
+from llm_runtime.models import ModelInfo, find_model, list_models, best_model, is_mmproj_path
 
 
 def _make_gguf(directory: Path, name: str, size_mb: int) -> Path:
@@ -36,6 +36,30 @@ def test_list_models_dedups_by_path(tmp_path):
         models = list_models(local_dirs=[tmp_path, tmp_path])
 
     assert len(models) == 1
+
+
+def test_list_models_excludes_mmproj(tmp_path):
+    _make_gguf(tmp_path, "model-Q4_K_M.gguf", size_mb=10)
+    _make_gguf(tmp_path, "mmproj-F16.gguf", size_mb=5)
+
+    with patch("llm_runtime.models._scan_ollama", return_value=[]):
+        models = list_models(local_dirs=[tmp_path])
+
+    assert [m.name for m in models] == ["model-Q4_K_M"]
+    assert is_mmproj_path("mmproj-F16.gguf") is True
+
+
+def test_list_models_groups_local_shards(tmp_path):
+    _make_gguf(tmp_path, "big-Q4_K_M-00001-of-00002.gguf", size_mb=10)
+    _make_gguf(tmp_path, "big-Q4_K_M-00002-of-00002.gguf", size_mb=5)
+
+    with patch("llm_runtime.models._scan_ollama", return_value=[]):
+        models = list_models(local_dirs=[tmp_path])
+
+    assert len(models) == 1
+    assert models[0].name == "big-Q4_K_M"
+    assert models[0].path.name == "big-Q4_K_M-00001-of-00002.gguf"
+    assert 0.014 < models[0].size_gb < 0.016
 
 
 def test_best_model_returns_largest_that_fits(tmp_path):

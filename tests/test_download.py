@@ -2,6 +2,7 @@ import pytest
 
 from llm_runtime.download import (
     GGUFFile, parse_ref, group_by_quant, choose_quant, best_fitting_quant, has_mmproj,
+    select_mmproj,
 )
 
 
@@ -86,6 +87,19 @@ def test_group_by_quant_excludes_mmproj():
 def test_has_mmproj_false_for_text_only():
     files = [GGUFFile("Model-Q4_K_M.gguf", size=4 * 1024**3, sha256="a")]
     assert has_mmproj(files) is False
+
+
+def test_select_mmproj_prefers_bf16_over_f32():
+    files = [
+        GGUFFile("mmproj-F32.gguf", size=2 * 1024**3, sha256="a"),
+        GGUFFile("mmproj-BF16.gguf", size=1 * 1024**3, sha256="b"),
+        GGUFFile("Model-Q4_K_M.gguf", size=4 * 1024**3, sha256="c"),
+    ]
+
+    chosen = select_mmproj(files)
+
+    assert chosen is not None
+    assert chosen.path == "mmproj-BF16.gguf"
 
 
 def test_choose_quant_picks_largest_that_fits():

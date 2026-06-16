@@ -102,6 +102,28 @@ def test_collect_doctor_inspects_model_and_mmproj(tmp_path):
     assert any("échoue au chargement" in a for a in report.actions)
 
 
+def test_collect_doctor_does_not_attach_generic_mmproj_to_text_model(tmp_path):
+    model = tmp_path / "model.gguf"
+    model.write_bytes(_build_gguf([
+        _kv_str(b"general.architecture", b"qwen2"),
+        _kv_u32(b"qwen2.block_count", 28),
+    ]))
+    (tmp_path / "mmproj-BF16.gguf").write_bytes(b"placeholder")
+    info = ModelInfo("model", Path(model), 4.0, "local")
+
+    with patch("llm_runtime.doctor.detect_hardware", return_value=_profile()), \
+         patch("llm_runtime.doctor.shutil.which", return_value=None), \
+         patch("llm_runtime.doctor._llama_cpp_info", return_value={
+             "installed": True,
+             "version": "0.0-test",
+             "gpu_offload_supported": True,
+         }), \
+         patch("llm_runtime.doctor.find_model", return_value=info):
+        report = collect_doctor("model")
+
+    assert report.mmproj_files == []
+
+
 def test_collect_doctor_warns_when_c3po_uses_another_python(tmp_path):
     c3po = tmp_path / "c3po"
     c3po.write_text("#!/other/python\nprint('x')\n")

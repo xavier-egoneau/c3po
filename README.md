@@ -45,6 +45,7 @@ c3po search mistral --limit 30  # inspecter plus de repos (défaut : 20)
 # Télécharge un modèle GGUF depuis Hugging Face (quant auto selon la VRAM)
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF          # quant choisie selon la VRAM
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF:Q5_K_M   # quant forcée
+c3po load unsloth/gemma-4-E2B-it-qat-GGUF:Q4_K_XL --mmproj  # inclut le projecteur multimodal
 
 # Métadonnées d'un modèle + benchmarks (général + code/édition) sur ce hardware
 c3po stats <modèle>
@@ -105,6 +106,8 @@ moins de copies en VRAM/RAM, calculs mémoire plus prévisibles, moins de risque
 Aujourd'hui c3po sert d'abord les modèles texte GGUF. Le multimodal n'est pas exclu du projet :
 il demande une extension dédiée (téléchargement/association des `mmproj`, messages image/audio,
 budget contexte multimodal, backend `libmtmd` ou délégation à `llama-server`).
+`c3po load --mmproj` permet déjà de récupérer le projecteur multimodal quand un repo en fournit
+un, sans encore brancher le runtime image/audio.
 
 ## Développement
 

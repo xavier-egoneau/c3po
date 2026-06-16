@@ -231,7 +231,7 @@ def cmd_load(args):
     from .download import load
 
     try:
-        load(args.ref, quant=args.quant, dest_dir=args.dir)
+        load(args.ref, quant=args.quant, dest_dir=args.dir, include_mmproj=args.mmproj)
     except ValueError as e:
         print(str(e))
     except Exception as e:
@@ -587,6 +587,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Quantization à télécharger (ex: Q5_K_M). Auto selon la VRAM si omis.")
     p_load.add_argument("--dir", default=None,
                         help="Dossier de destination (défaut: ~/.c3po/models ou $C3PO_MODELS_DIR)")
+    p_load.add_argument("--mmproj", action="store_true",
+                        help="Télécharger aussi le projecteur multimodal mmproj si présent")
 
     # stats
     p_stats = sub.add_parser("stats", help="Métadonnées d'un modèle + benchmark sur ce hardware")
