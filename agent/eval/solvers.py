@@ -94,16 +94,24 @@ def make_oneshot_solver(chat: ChatFn) -> Solver:
     """Baseline brute : un appel modèle, on parse les fichiers émis, on les écrit."""
 
     def _solve(prompt: str, workdir: Path) -> None:
-        reply = chat([{"role": "system", "content": _INSTRUCTION}, {"role": "user", "content": prompt}])
-        _apply_reply(reply, prompt, Path(workdir))
+        workdir = Path(workdir)
+        reply = chat([
+            {"role": "system", "content": _INSTRUCTION},
+            {"role": "user", "content": _initial_user_message(prompt, workdir)},
+        ])
+        _apply_reply(reply, prompt, workdir)
 
     return _solve
 
 
-def make_agent_solver(chat: ChatFn, max_rounds: int = 3) -> Solver:
+def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False) -> Solver:
     """Couche agentic GÉNÉRIQUE : émet les fichiers, les **vérifie en les exécutant**
     (compile, tests, smoke-run), et **renvoie l'erreur concrète au modèle** pour qu'il
     corrige — boucle bornée. Aucune logique propre à une tâche ni à un domaine.
+
+    Option `self_test` (OFF par défaut) : le modèle écrit aussi ses tests-sanité, qu'on exécute.
+    Mesuré régressif sur gemma-E2B (95%→90% : ses tests à expectations fausses lui font « corriger »
+    du code correct). Gardé pour expérimentation, désactivé par défaut.
 
     La vérification est la sienne, indépendante des checkers de l'éval (ne pas tricher).
     """
@@ -112,34 +120,97 @@ def make_agent_solver(chat: ChatFn, max_rounds: int = 3) -> Solver:
         workdir = Path(workdir)
         messages: list[Message] = [
             {"role": "system", "content": _INSTRUCTION},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": _initial_user_message(prompt, workdir)},
         ]
         reply = chat(messages)
         _apply_reply(reply, prompt, workdir)
+        state: dict[str, str] = {}
 
-        for _ in range(max_rounds - 1):
-            issues = _verify_workdir(workdir)
-            if not issues:
-                return
-            messages.extend(
-                [
-                    {"role": "assistant", "content": reply},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Des problèmes subsistent quand j'exécute ton rendu. Corrige le "
-                            "CODE (pas les fichiers de test) et redonne les fichiers COMPLETS "
-                            "dans le même format.\n\n"
-                            f"Problèmes détectés :\n{issues}\n\n"
-                            f"Fichiers actuels :\n{_render_current_files(workdir)}"
-                        ),
-                    },
-                ]
-            )
-            reply = chat(messages)
-            _apply_reply(reply, prompt, workdir)
+        try:
+            for _ in range(max_rounds - 1):
+                issues = _verify_workdir(workdir)
+                if not issues and self_test:
+                    issues = _self_test(chat, workdir, state)
+                if not issues:
+                    return
+                messages.extend(
+                    [
+                        {"role": "assistant", "content": reply},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Des problèmes subsistent quand j'exécute ton rendu. Corrige le "
+                                "CODE (pas les fichiers de test) et redonne les fichiers COMPLETS "
+                                "dans le même format.\n\n"
+                                f"Problèmes détectés :\n{issues}\n\n"
+                                f"Fichiers actuels :\n{_render_current_files(workdir)}"
+                            ),
+                        },
+                    ]
+                )
+                reply = chat(messages)
+                _apply_reply(reply, prompt, workdir)
+        finally:
+            _cleanup_selfcheck(workdir)
 
     return _solve
+
+
+_SELFTEST_INSTRUCTION = (
+    "Écris UN fichier selfcheck_main.py qui éprouve le comportement du code ci-dessous avec "
+    "des assertions : importe le code, couvre quelques cas normaux ET surtout des cas limites "
+    "représentatifs où il pourrait se tromper. Juste des `assert` + un bloc exécutable "
+    "(`if __name__ == \"__main__\"`), pas de framework. Il doit lever AssertionError si le code "
+    "est faux. Ne teste pas l'évident."
+)
+
+
+def _self_test(chat: ChatFn, workdir: Path, state: dict[str, str]) -> str:
+    """Le modèle écrit ses tests-sanité (une seule fois), on les exécute. Renvoie un texte
+    d'erreur seulement si SES tests échouent par AssertionError (= son code est faux selon
+    lui-même). Un selfcheck cassé (import/syntaxe) est inconcluant : ignoré."""
+    name = "selfcheck_main.py"
+    if "generated" not in state:
+        state["generated"] = "1"
+        reply = chat(
+            [
+                {"role": "system", "content": _INSTRUCTION},
+                {"role": "user", "content": _SELFTEST_INSTRUCTION + "\n\nCode actuel :\n" + _render_current_files(workdir)},
+            ]
+        )
+        content = parse_file_blocks(reply).get(name) or _first_python_block(reply)
+        if content:
+            (workdir / name).write_text(content, encoding="utf-8")
+            state["selfcheck"] = name
+    if "selfcheck" not in state:
+        return ""
+    proc = subprocess.run([sys.executable, state["selfcheck"]], cwd=workdir, capture_output=True, text=True)
+    if proc.returncode == 0:
+        return ""
+    if "AssertionError" in proc.stderr:
+        return "Tes propres tests de sanité échouent (corrige le CODE, pas les tests) :\n" + proc.stderr.strip()[-500:]
+    return ""
+
+
+def _first_python_block(reply: str) -> str | None:
+    for header, body in _BLOCK.findall(reply):
+        if "python" in header.lower() or not header.strip():
+            return _strip_leading_marker(body)
+    return None
+
+
+def _cleanup_selfcheck(workdir: Path) -> None:
+    for path in Path(workdir).glob("selfcheck_*.py"):
+        path.unlink(missing_ok=True)
+
+
+def _initial_user_message(prompt: str, workdir: Path) -> str:
+    """Prompt + contexte du dossier de travail (fichiers déjà présents). Sans ça, on
+    demande au modèle de modifier des fichiers qu'il ne voit pas — baseline injuste."""
+    existing = _render_current_files(Path(workdir))
+    if existing.strip():
+        return prompt + "\n\nFichiers déjà présents dans le dossier de travail :\n" + existing
+    return prompt
 
 
 def _apply_reply(reply: str, prompt: str, workdir: Path) -> None:
@@ -199,6 +270,8 @@ def _render_current_files(workdir: Path, max_chars: int = 4000) -> str:
     exts = {".py", ".js", ".mjs", ".html", ".htm", ".css", ".json", ".txt", ".csv"}
     parts: list[str] = []
     for path in sorted(workdir.rglob("*")):
+        if path.name.startswith("selfcheck_"):
+            continue  # scaffolding interne : on ne le montre pas au modèle qui corrige le code
         if path.is_file() and path.suffix in exts and "__pycache__" not in path.parts:
             body = _src(path)
             if len(body) > max_chars:
