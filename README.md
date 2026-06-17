@@ -7,13 +7,48 @@ que cachés.
 
 ## Installation
 
+### Windows + Nvidia
+
+Le chemin recommande sous Windows est un environnement virtuel Python 3.11/3.12 avec une wheel
+CUDA precompilee. C'est le plus fiable : Python 3.13 peut compiler `llama-cpp-python` en CPU-only
+si le CUDA toolkit (`nvcc`) n'est pas installe.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_windows_cuda.ps1
+.\.venv\Scripts\Activate.ps1
+c3po doctor
+```
+
+Verification attendue :
+
+```text
+Offload GPU       : oui
+```
+
+Si `c3po` pointe encore vers un Python global, lance directement :
+
+```powershell
+.\.venv\Scripts\c3po.exe doctor
+.\.venv\Scripts\c3po.exe stats <modèle>
+```
+
+### Installation standard
+
 ```bash
 python3 -m pip install --user -e ".[dev]"
 ```
 
+Sous Windows, si `c3po` n'est pas reconnu apres l'installation standard, ajoutez le dossier Scripts
+utilisateur au `PATH` :
+
+```powershell
+$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts', scheme='nt_user'))"
+$env:Path = "$scripts;$env:Path"
+```
+
 **Apple Silicon (Metal)** : le backend Metal est activé par défaut, rien de plus à faire.
 
-**Nvidia (CUDA)** : `llama-cpp-python` doit être compilé avec le backend CUDA (nécessite le
+**Linux + Nvidia (CUDA)** : `llama-cpp-python` doit être compilé avec le backend CUDA (nécessite le
 CUDA toolkit `nvcc` + `cmake`) — les wheels précompilées sont trop anciennes pour les modèles
 récents :
 
@@ -37,6 +72,9 @@ c3po info
 c3po doctor
 c3po doctor <modèle>
 
+# Bench réel ; vérifiez surtout "Offload GPU : oui" et la VRAM modèle
+c3po stats <modèle>
+
 # Cherche sur Hugging Face les modèles GGUF qui tiennent dans ta VRAM
 c3po search qwen2.5            # éligibles seulement
 c3po search "llama 3" --all   # tout, avec colonne FIT
@@ -46,9 +84,6 @@ c3po search mistral --limit 30  # inspecter plus de repos (défaut : 20)
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF          # quant choisie selon la VRAM
 c3po load bartowski/Qwen2.5-7B-Instruct-GGUF:Q5_K_M   # quant forcée
 c3po load unsloth/gemma-4-E2B-it-qat-GGUF:Q4_K_XL --mmproj  # inclut le projecteur multimodal
-
-# Métadonnées d'un modèle + benchmarks (général + code/édition) sur ce hardware
-c3po stats <modèle>
 
 # Chat interactif
 c3po run <modèle>

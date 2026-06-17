@@ -12,6 +12,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pre-commit>=3.0"]
+cuda-win = [
+    "nvidia-cublas-cu12==12.4.5.8; platform_system == 'Windows'",
+    "nvidia-cuda-runtime-cu12==12.4.127; platform_system == 'Windows'",
+]
 
 [project.scripts]
 c3po = "llm_runtime.cli:main"

@@ -18,6 +18,21 @@ import sys
 from pathlib import Path
 
 
+def _configure_stdio() -> None:
+    """Avoid Windows console encoding crashes on decorative Unicode output."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except Exception:
+            pass
+
+
+_configure_stdio()
+
+
 # ---------------------------------------------------------------------------
 # Politique d'instance unique
 # ---------------------------------------------------------------------------
@@ -61,9 +76,9 @@ def cmd_list(args):
         return
 
     print(f"{'NOM':<35} {'TAILLE':>8}  {'FIT':>4}  SOURCE    CHEMIN")
-    print("─" * 100)
+    print("-" * 100)
     for m in models:
-        fits = "✓" if m.fits_in(profile.gpu_memory_gb) else "✗"
+        fits = "OK" if m.fits_in(profile.gpu_memory_gb) else "NO"
         name = m.name[:34]
         path_str = str(m.path)
         if len(path_str) > 45:
@@ -90,10 +105,10 @@ def cmd_info(args):
     profile = detect_hardware()
     params = compute_params(profile)
 
-    print("── Hardware ──────────────────────────────")
+    print("-- Hardware ------------------------------")
     print(profile)
     print()
-    print("── Paramètres d'inférence calculés ──────")
+    print("-- Paramètres d'inférence calculés -------")
     print(params)
 
 
@@ -124,7 +139,7 @@ def cmd_run(args):
     print(engine)
     print()
     print("Session de chat (Ctrl+C ou 'exit' pour quitter)")
-    print("─" * 50)
+    print("-" * 50)
 
     history = []
 
@@ -230,7 +245,7 @@ def cmd_batch(args):
         print()
         for r in summary.results:
             label = Path(r.source).name if r.source else f"#{r.id}"
-            print(f"── {label}")
+            print(f"-- {label}")
             print(r.response.strip() if not r.error else f"[ERREUR] {r.error}")
             print()
 
@@ -272,10 +287,10 @@ def cmd_search(args):
         return
 
     print(f"\n{'REPO':<55} {'QUANT':>10} {'TAILLE':>8}  {'FIT':>4}  {'DL':>8}")
-    print("─" * 95)
+    print("-" * 95)
     any_mm = False
     for r in results:
-        fit = "✓" if r.fits else "✗"
+        fit = "OK" if r.fits else "NO"
         mark = " *" if r.multimodal else ""
         any_mm = any_mm or r.multimodal
         repo = (r.repo + mark)
@@ -341,12 +356,12 @@ def cmd_serve(args):
 
     print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
     if args.host == "0.0.0.0":
-        print("⚠️  Écoute sur toutes les interfaces réseau, sans authentification.")
+        print("ATTENTION : écoute sur toutes les interfaces réseau, sans authentification.")
     if model_path:
         print(f"Modèle : {model_path.name}")
     else:
         print("Modèle : sélection automatique (best_model)")
-    print("─" * 50)
+    print("-" * 50)
 
     cmd = [
         sys.executable, "-m", "uvicorn",
@@ -395,7 +410,7 @@ def _maybe_compact_history(engine, history: list[dict]) -> list[dict]:
 
     after = engine.count_messages_tokens(compacted)
     print(
-        f"\n[Historique compacté : ~{tokens} → ~{after} tokens "
+        f"\n[Historique compacté : ~{tokens} -> ~{after} tokens "
         f"(seuil {limit}/{engine.params.n_ctx}).]"
     )
     return compacted
@@ -541,7 +556,7 @@ def _add_engine_args(parser: argparse.ArgumentParser, ctx_default: int = 4096) -
                              "monter à ~1.2-1.3 si le modèle boucle)")
 
 
-# Alias CLI courts → noms ggml canoniques
+# Alias CLI courts -> noms ggml canoniques
 _KV_ALIASES = {"f16": "f16", "q8": "q8_0", "q4": "q4_0"}
 
 

@@ -15,6 +15,7 @@ def test_format_stats_shows_general_and_code_benchmarks():
         n_vocab=152064,
         backend="cuda",
         device="gpu",
+        gpu_offload_supported=True,
         n_gpu_layers=-1,
         n_threads=8,
         n_ctx=4096,

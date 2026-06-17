@@ -1,5 +1,6 @@
 import struct
 import sys
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -52,7 +53,8 @@ def test_collect_doctor_reports_missing_llama_cpp():
     assert report.llama_cpp_installed is False
     assert report.python_executable == sys.executable
     assert report.errors
-    assert any("GGML_CUDA" in a for a in report.actions)
+    expected = "setup_windows_cuda.ps1" if os.name == "nt" else "GGML_CUDA"
+    assert any(expected in a for a in report.actions)
     assert "llama-cpp-python" in format_doctor(report)
     assert "Actions recommandées" in format_doctor(report)
 
@@ -68,7 +70,8 @@ def test_collect_doctor_recommends_rebuild_when_gpu_offload_missing():
         report = collect_doctor()
 
     assert report.warnings
-    assert any("--force-reinstall" in a for a in report.actions)
+    expected = "setup_windows_cuda.ps1" if os.name == "nt" else "--force-reinstall"
+    assert any(expected in a for a in report.actions)
 
 
 def test_collect_doctor_inspects_model_and_mmproj(tmp_path):
@@ -134,7 +137,9 @@ def test_collect_doctor_warns_when_c3po_uses_another_python(tmp_path):
              "installed": True,
              "version": "0.0-test",
              "gpu_offload_supported": True,
-         }):
+         }), \
+         patch("llm_runtime.doctor.sys.executable", str(tmp_path / "python.exe")), \
+         patch("llm_runtime.doctor.sys.prefix", sys.base_prefix):
         report = collect_doctor()
 
     assert report.c3po_executable == str(c3po)

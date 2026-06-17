@@ -8,6 +8,7 @@ rapidement pourquoi un modèle récent ou multimodal peut ne pas fonctionner.
 
 from __future__ import annotations
 import importlib
+import os
 import platform
 import shutil
 import sys
@@ -60,11 +61,12 @@ class DoctorReport:
 def collect_doctor(model_query: str | None = None) -> DoctorReport:
     profile = detect_hardware()
     llama_info = _llama_cpp_info()
+    c3po_executable = _current_c3po_executable()
     report = DoctorReport(
         python=sys.version.split()[0],
         python_executable=sys.executable,
-        c3po_executable=shutil.which("c3po"),
-        c3po_shebang=_script_shebang(shutil.which("c3po")),
+        c3po_executable=c3po_executable,
+        c3po_shebang=_script_shebang(c3po_executable),
         platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
         backend=profile.backend.value,
         device=profile.device_name,
@@ -95,6 +97,21 @@ def collect_doctor(model_query: str | None = None) -> DoctorReport:
     return report
 
 
+def _current_c3po_executable() -> str | None:
+    sibling = Path(sys.executable).with_name("c3po.exe" if os.name == "nt" else "c3po")
+    if sibling.exists():
+        return str(sibling.resolve())
+
+    invoked = Path(sys.argv[0])
+    if invoked.name.lower().startswith("c3po"):
+        if invoked.exists():
+            return str(invoked.resolve())
+        found = shutil.which(invoked.name)
+        if found:
+            return found
+    return shutil.which("c3po")
+
+
 def _script_shebang(path: str | None) -> str | None:
     if not path:
         return None
@@ -120,6 +137,8 @@ def _check_python_mismatch(report: DoctorReport) -> None:
 
 def _install_actions(backend: Backend) -> list[str]:
     if backend == Backend.CUDA:
+        if os.name == "nt":
+            return _windows_cuda_actions()
         return [
             "Installer les outils de build CUDA : sudo apt install -y nvidia-cuda-toolkit",
             "Installer CMake : python3 -m pip install cmake",
@@ -139,6 +158,8 @@ def _install_actions(backend: Backend) -> list[str]:
 
 def _rebuild_actions(backend: Backend) -> list[str]:
     if backend == Backend.CUDA:
+        if os.name == "nt":
+            return _windows_cuda_actions()
         return [
             "Recompiler llama-cpp-python avec CUDA : CMAKE_ARGS=\"-DGGML_CUDA=on\" FORCE_CMAKE=1 python3 -m pip install --force-reinstall --no-cache-dir llama-cpp-python",
             "Relancer c3po doctor pour vérifier que l'offload GPU passe à oui.",
@@ -151,6 +172,20 @@ def _rebuild_actions(backend: Backend) -> list[str]:
     return [
         "Aucun backend GPU détecté ; l'inférence CPU est attendue.",
     ]
+
+
+def _windows_cuda_actions() -> list[str]:
+    actions = [
+        "Installer l'environnement CUDA Windows : powershell -ExecutionPolicy Bypass -File scripts\\setup_windows_cuda.ps1",
+        "Activer le venv : .\\.venv\\Scripts\\Activate.ps1",
+        "Relancer le diagnostic : c3po doctor",
+    ]
+    if sys.version_info >= (3, 13):
+        actions.insert(
+            0,
+            "Python 3.13 peut forcer une build CPU-only ; utilise le venv Python 3.11/3.12 créé par le script.",
+        )
+    return actions
 
 
 def _llama_cpp_info() -> dict:
@@ -248,7 +283,7 @@ def format_doctor(report: DoctorReport) -> str:
         else ("oui" if report.gpu_offload_supported else "non")
     )
     out = [
-        "── Environnement ──",
+        "-- Environnement --",
         line("Python", report.python),
         line("Python exe", report.python_executable),
         line("c3po exe", report.c3po_executable or "?"),
@@ -258,7 +293,7 @@ def format_doctor(report: DoctorReport) -> str:
         line("Device", report.device),
         line("Mémoire modèle", f"{report.gpu_memory_gb:.1f} Go"),
         "",
-        "── llama-cpp-python ──",
+        "-- llama-cpp-python --",
         line("Installé", "oui" if report.llama_cpp_installed else "non"),
         line("Version", report.llama_cpp_version or "?"),
         line("Offload GPU", gpu),
@@ -267,7 +302,7 @@ def format_doctor(report: DoctorReport) -> str:
     if report.model_path:
         out += [
             "",
-            f"── Modèle : {report.model_name} ──",
+            f"-- Modèle : {report.model_name} --",
             line("Chemin", report.model_path),
             line("Taille", f"{report.model_size_gb} Go"),
             line("Architecture", report.arch or "?"),
@@ -281,15 +316,15 @@ def format_doctor(report: DoctorReport) -> str:
             out.append(line("mmproj", ", ".join(report.mmproj_files)))
 
     if report.warnings:
-        out += ["", "── Avertissements ──"]
+        out += ["", "-- Avertissements --"]
         out += [f"  - {w}" for w in report.warnings]
 
     if report.errors:
-        out += ["", "── Erreurs ──"]
+        out += ["", "-- Erreurs --"]
         out += [f"  - {e}" for e in report.errors]
 
     if report.actions:
-        out += ["", "── Actions recommandées ──"]
+        out += ["", "-- Actions recommandées --"]
         out += [f"  - {a}" for a in report.actions]
 
     if not report.warnings and not report.errors:

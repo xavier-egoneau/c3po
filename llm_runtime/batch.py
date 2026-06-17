@@ -203,7 +203,7 @@ def run_batch(
 
     if verbose:
         print(f"Batch : {len(tasks)} tâches — {jobs} worker(s) — modèle : {Path(model_path).name}")
-        print("─" * 60)
+        print("-" * 60)
 
     t0 = time.time()
     results: list[BatchResult] = []
@@ -223,7 +223,7 @@ def run_batch(
         for i, result in enumerate(pool.imap_unordered(_worker_run, tasks), start=1):
             results.append(result)
             if verbose:
-                status = "✓" if result.error is None else "✗"
+                status = "OK" if result.error is None else "NO"
                 source = Path(result.source).name if result.source else f"#{result.id}"
                 print(f"  [{i:>3}/{len(tasks)}] {status} {source:<40} {result.duration_s:.1f}s  pid:{result.worker_pid}")
 
@@ -243,7 +243,7 @@ def run_batch(
     )
 
     if verbose:
-        print("─" * 60)
+        print("-" * 60)
         print(f"Terminé en {total_duration:.1f}s — {summary.success}/{summary.total} succès")
 
     return summary

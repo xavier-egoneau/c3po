@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import subprocess
 import time
+import importlib
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
@@ -70,6 +71,7 @@ class ModelStats:
     # Hardware + paramètres appliqués
     backend: str
     device: str
+    gpu_offload_supported: bool | None
     n_gpu_layers: int
     n_threads: int
     n_ctx: int
@@ -100,6 +102,21 @@ def _gpu_mem_used_mb() -> float | None:
         ).strip()
         return float(out.splitlines()[0])
     except (FileNotFoundError, subprocess.CalledProcessError, ValueError, IndexError):
+        return None
+
+
+def _llama_gpu_offload_supported() -> bool | None:
+    try:
+        llama_cpp = importlib.import_module("llama_cpp")
+    except ImportError:
+        return None
+
+    fn = getattr(llama_cpp, "llama_supports_gpu_offload", None)
+    if not callable(fn):
+        return None
+    try:
+        return bool(fn())
+    except Exception:
         return None
 
 
@@ -204,6 +221,8 @@ def collect_stats(
     load_time = time.time() - t0
     vram_after = _gpu_mem_used_mb()
     vram_used = (vram_after - vram_before) if (vram_before is not None and vram_after is not None) else None
+    if vram_used is not None and vram_used < 0:
+        vram_used = 0
 
     llm = engine._llm
     metadata = dict(getattr(llm, "metadata", {}) or {})
@@ -261,6 +280,7 @@ def collect_stats(
         n_vocab=n_vocab,
         backend=profile.backend.value,
         device=profile.device_name,
+        gpu_offload_supported=_llama_gpu_offload_supported(),
         n_gpu_layers=params.n_gpu_layers,
         n_threads=params.n_threads,
         n_ctx=params.n_ctx,
@@ -283,11 +303,12 @@ def format_stats(s: ModelStats) -> str:
         return f"  {label:<16}: {value}"
 
     gpu = "toutes" if s.n_gpu_layers == -1 else str(s.n_gpu_layers)
+    offload = "?" if s.gpu_offload_supported is None else ("oui" if s.gpu_offload_supported else "non")
     params = f"{s.n_params_b} G" if s.n_params_b is not None else "?"
     vram = f"{s.vram_used_mb:.0f} Mo" if s.vram_used_mb is not None else "n/a (pas de GPU Nvidia)"
 
     lines = [
-        f"── Modèle : {s.name} ──",
+        f"-- Modèle : {s.name} --",
         line("Fichier", f"{s.size_gb} Go"),
         line("Architecture", s.architecture),
         line("Quantization", s.quantization),
@@ -297,8 +318,9 @@ def format_stats(s: ModelStats) -> str:
         line("Embedding", s.n_embd if s.n_embd is not None else "?"),
         line("Vocabulaire", s.n_vocab if s.n_vocab is not None else "?"),
         "",
-        "── Inférence sur ce hardware ──",
+        "-- Inférence sur ce hardware --",
         line("Backend", s.backend),
+        line("Offload GPU", offload),
         line("Device", s.device),
         line("n_gpu_layers", f"{gpu} couches"),
         line("n_threads", s.n_threads),
@@ -308,10 +330,16 @@ def format_stats(s: ModelStats) -> str:
         line("speculative", s.speculative),
         line("repeat_penalty", s.repeat_penalty),
         "",
-        "── Benchmark ──",
+        "-- Benchmark --",
         line("Chargement", f"{s.load_time_s} s"),
         line("VRAM modèle", vram),
     ]
+    if s.backend == "cuda" and s.gpu_offload_supported is False:
+        lines.extend([
+            "",
+            "ATTENTION : CUDA est détecté, mais llama-cpp-python ne supporte pas l'offload GPU.",
+            "La génération tourne probablement sur CPU. Utilise le c3po du venv CUDA.",
+        ])
 
     benches = s.benchmarks or [
         BenchmarkStats(

@@ -1,3 +1,7 @@
+from .dlls import configure_windows_gpu_dll_paths
+
+configure_windows_gpu_dll_paths()
+
 from .hardware import detect_hardware, HardwareProfile
 from .params import compute_params, InferenceParams
 from .engine import Engine
