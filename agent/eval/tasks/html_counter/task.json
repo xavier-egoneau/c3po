@@ -1,0 +1,5 @@
+{
+  "name": "html_counter",
+  "prompt": "Crée index.html : une page web autonome, sans dépendance externe, avec un bouton id='inc' et un élément id='count' affichant 0 au départ. Au clic sur le bouton, le compteur s'incrémente. CSS/JS inline ou fichiers liés présents dans le dossier.",
+  "requires": []
+}

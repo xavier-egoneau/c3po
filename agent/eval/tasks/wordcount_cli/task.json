@@ -1,0 +1,5 @@
+{
+  "name": "wordcount_cli",
+  "prompt": "Écris cli.py : un outil ligne de commande qui prend un chemin de fichier en argument et imprime sur stdout le nombre de mots du fichier (séparés par des espaces/sauts de ligne). `python cli.py fichier.txt` doit afficher juste l'entier.",
+  "requires": []
+}

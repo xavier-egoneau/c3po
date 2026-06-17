@@ -1,0 +1,5 @@
+{
+  "name": "fix_failing_test",
+  "prompt": "Le test test_calc.py échoue à cause d'un bug dans calc.py. Corrige calc.py pour que tous les tests passent, sans casser le comportement existant ni supprimer/affaiblir les tests.",
+  "requires": []
+}

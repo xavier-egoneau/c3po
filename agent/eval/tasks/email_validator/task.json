@@ -1,0 +1,5 @@
+{
+  "name": "email_validator",
+  "prompt": "Écris dans solution.py une fonction is_valid_email(adresse: str) -> bool qui valide une adresse email. Sois rigoureux sur les cas limites (point final, double point, label de domaine invalide, espace, arobase manquante ou multiple).",
+  "requires": []
+}

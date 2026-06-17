@@ -1,0 +1,4 @@
+# Bac à sable d'exécution : tout est ignoré sauf ce fichier et le README.
+*
+!.gitignore
+!README.md

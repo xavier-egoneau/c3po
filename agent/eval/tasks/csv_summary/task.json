@@ -1,0 +1,5 @@
+{
+  "name": "csv_summary",
+  "prompt": "Écris solution.py qui lit input.csv (colonnes 'category' et 'amount') et écrit summary.json : un objet { catégorie: total }, totaux par catégorie. `python solution.py` doit produire summary.json dans le dossier courant.",
+  "requires": []
+}

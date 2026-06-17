@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Compteur</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 4rem; }
+    #count { font-size: 3rem; }
+    button { font-size: 1.2rem; padding: .5rem 1rem; }
+  </style>
+</head>
+<body>
+  <div id="count">0</div>
+  <button id="inc">+1</button>
+  <script>
+    (function () {
+      var count = 0;
+      var label = document.getElementById("count");
+      document.getElementById("inc").addEventListener("click", function () {
+        count = count + 1;
+        label.textContent = count;
+      });
+    })();
+  </script>
+</body>
+</html>
