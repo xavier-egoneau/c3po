@@ -206,11 +206,74 @@ def _cleanup_selfcheck(workdir: Path) -> None:
 
 def _initial_user_message(prompt: str, workdir: Path) -> str:
     """Prompt + contexte du dossier de travail (fichiers déjà présents). Sans ça, on
-    demande au modèle de modifier des fichiers qu'il ne voit pas — baseline injuste."""
+    demande au modèle de modifier des fichiers qu'il ne voit pas — baseline injuste.
+    Version BRUTE : dump TOUT le dossier (sature un petit modèle si le repo est gros)."""
     existing = _render_current_files(Path(workdir))
     if existing.strip():
         return prompt + "\n\nFichiers déjà présents dans le dossier de travail :\n" + existing
     return prompt
+
+
+def make_context_solver(chat: ChatFn, max_files: int = 4) -> Solver:
+    """Égaliseur par le CONTEXTE : au lieu de dumper tout le dossier, on SÉLECTIONNE les
+    fichiers pertinents (nommés dans le prompt + clôture de leurs imports) et on ne donne
+    que ceux-là. Sur un gros dossier, ça évite de noyer un petit modèle. Générique."""
+
+    def _solve(prompt: str, workdir: Path) -> None:
+        workdir = Path(workdir)
+        selected = _select_context_files(prompt, workdir, max_files)
+        message = prompt
+        if selected:
+            message += "\n\nFichiers pertinents :\n" + _render_files(workdir, selected)
+        reply = chat([{"role": "system", "content": _INSTRUCTION}, {"role": "user", "content": message}])
+        _apply_reply(reply, prompt, workdir)
+
+    return _solve
+
+
+def _select_context_files(prompt: str, workdir: Path, max_files: int) -> list[str]:
+    workdir = Path(workdir)
+    all_files = {
+        p.relative_to(workdir).as_posix(): p
+        for p in sorted(workdir.rglob("*"))
+        if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("selfcheck_")
+    }
+    selected: list[str] = [rel for rel in all_files if Path(rel).name in prompt]
+    # Clôture des imports : un fichier sélectionné en tire d'autres réellement utiles.
+    frontier = list(selected)
+    while frontier and len(selected) < max_files * 3:
+        current = workdir / frontier.pop()
+        if current.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(current.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module.split(".")[0]]
+            for module in modules:
+                candidate = f"{module}.py"
+                if candidate in all_files and candidate not in selected:
+                    selected.append(candidate)
+                    frontier.append(candidate)
+    return selected[:max_files]
+
+
+def _render_files(workdir: Path, paths: list[str], max_chars: int = 4000) -> str:
+    workdir = Path(workdir)
+    parts: list[str] = []
+    for rel in paths:
+        path = workdir / rel
+        if path.is_file():
+            body = path.read_text(encoding="utf-8", errors="replace")
+            if len(body) > max_chars:
+                body = body[:max_chars] + "\n[...tronqué...]"
+            parts.append(f"```text path={rel}\n{body}\n```")
+    return "\n\n".join(parts)
 
 
 def _apply_reply(reply: str, prompt: str, workdir: Path) -> None:

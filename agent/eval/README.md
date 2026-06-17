@@ -58,24 +58,41 @@ python -m agent.eval --model ~/.c3po/models/<x.gguf> --agent   # couche agentic 
 
 ```python
 from agent.eval.harness import load_tasks, run_eval, render_comparison
-from agent.eval.solvers import engine_chat, make_oneshot_solver, make_agent_solver
+from agent.eval.solvers import engine_chat, make_oneshot_solver, make_context_solver
 
 tasks = load_tasks()
 chat = engine_chat("~/.c3po/models/<x.gguf>")
 reports = {
-    "small":       run_eval(lambda t: make_oneshot_solver(chat), "small",       tasks),
-    "small_agent": run_eval(lambda t: make_agent_solver(chat),   "small_agent", tasks),
+    "small":       run_eval(lambda t: make_oneshot_solver(chat),  "small",       tasks),
+    "small_agent": run_eval(lambda t: make_context_solver(chat),  "small_agent", tasks),
 }
 print(render_comparison(reports))   # table + moyennes
 ```
 
-Les deux solvers (`agent/eval/solvers.py`) :
+Les solvers (`agent/eval/solvers.py`) :
 
-- `make_oneshot_solver` — le **plancher** : un appel modèle, zéro outil, zéro boucle.
-- `make_agent_solver` — la **couche agentic générique** : émet, puis **vérifie en exécutant**
-  (compile, pytest, smoke-run) et **renvoie l'erreur concrète au modèle** pour qu'il corrige,
-  en boucle bornée. Aucune logique propre à une tâche. Sa vérif est indépendante des `check.py`
-  de l'éval (ne pas tricher). C'est lui qui doit battre le plancher — et le delta le prouve.
+- `make_oneshot_solver` — **baseline** : un appel, et on **dump tout le dossier** comme contexte.
+- `make_context_solver` — **l'égaliseur (phare, branché sur `--agent`)** : au lieu de tout dumper,
+  il **sélectionne** les fichiers pertinents (nommés dans le prompt + clôture de leurs imports) et
+  ne donne que ceux-là. Sur un dossier réel, ça évite de noyer un petit modèle. Générique.
+- `make_agent_solver` — **add-on expérimental, off** : boucle émettre → vérifier en exécutant
+  (compile, pytest, smoke-run) → renvoyer l'erreur au modèle. Mesuré **+0 %** ici (voir plus bas).
+
+## Ce que la mesure a tranché (2026-06-17, RTX 4070)
+
+> **L'égaliseur petit-modèle, c'est le CONTEXTE, pas la machinerie de boucle.**
+
+- **Boucle de feedback : +0 %.** Un « +13 % » observé d'abord était un *artefact* de baseline
+  injuste (l'oneshot ne montrait pas les fichiers existants ; un coder-14B répondait à juste titre
+  « je ne vois pas le code »). Baseline corrigée → la boucle n'ajoute rien sur ces tâches.
+- **Self-test du modèle : régressif** (gemma 95 %→90 %) — ses tests à expectations fausses lui font
+  « corriger » du code correct. Désactivé.
+- **Sélection de contexte : +17 %.** Sur `fix_in_repo` (le bon fichier noyé dans ~7 k tokens de
+  bruit), dump-all sature la fenêtre 8 k de gemma → **0 %** ; la sélection → **100 %**.
+- `email_validator` reste 75 % partout : une correctness purement logique qu'aucun check exécutable
+  ne capte — limite assumée.
+
+Conséquence : on développe l'**optimisation de contexte** (le pilier du runtime), pas la boucle.
 
 ## Ajouter une tâche
 
@@ -98,6 +115,7 @@ des heuristiques textuelles.
 | `csv_summary` | sortie structurée exacte |
 | `wordcount_cli` | livrable réellement exécutable (CLI) |
 | `html_counter` | artefact web câblé (le domaine de l'ancien overfit, réduit à **1** tâche) |
+| `fix_in_repo` | **bug noyé dans un dossier bruité** → sonde l'optimisation de contexte |
 
 ## Limites assumées
 
