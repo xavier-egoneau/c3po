@@ -34,30 +34,48 @@ tout chemin hors de `test/`. Un solver ne reçoit qu'un `workdir` sous `test/` :
 petit modèle avec des outils d'écriture **ne peut pas toucher au repo c3po**. Voir
 `test/README.md`.
 
-## Brancher un vrai solver
+## Métrique : taux de réussite absolu + delta brut → agentic
 
-Un solver est `Callable[[str, Path], None]`. Les trois labels qui donnent la
-métrique d'écart :
+Les checks sont **exécutables**, donc le score est interprétable tel quel : 70 % = 70 %
+des vérifications passent. On suit deux labels :
 
-- `big` : gros modèle frontier (baseline, ex. appel API) ;
-- `small` : petit modèle **brut** (ex. qwen via le runtime, sans agentic) ;
+- `small` : petit modèle **brut** (qwen via le runtime, un seul appel, sans agentic) ;
 - `small_agent` : petit modèle **+ couche agentic**.
+
+Ce qui dit si l'agentic vaut son coût = le **delta `small_agent − small`** (de combien il
+fait monter le petit modèle) et l'**absolu** (à quel point on approche 100 %). Pas de
+baseline gros modèle dans le harnais : on compare au gros **à la main, à côté**, au besoin.
+
+### Lancer (déjà câblé)
+
+```bash
+c3po load <repo-gguf>                                       # re-télécharger le modèle si besoin
+python -m agent.eval --model ~/.c3po/models/<x.gguf>           # baseline brute -> label "small"
+python -m agent.eval --model ~/.c3po/models/<x.gguf> --agent   # couche agentic -> label "small_agent"
+```
+
+### En code
 
 ```python
 from agent.eval.harness import load_tasks, run_eval, render_comparison
+from agent.eval.solvers import engine_chat, make_oneshot_solver, make_agent_solver
 
 tasks = load_tasks()
+chat = engine_chat("~/.c3po/models/<x.gguf>")
 reports = {
-    "big":         run_eval(lambda t: big_solver,   "big",         tasks),
-    "small":       run_eval(lambda t: small_solver, "small",       tasks),
-    "small_agent": run_eval(lambda t: agent_solver, "small_agent", tasks),
+    "small":       run_eval(lambda t: make_oneshot_solver(chat), "small",       tasks),
+    "small_agent": run_eval(lambda t: make_agent_solver(chat),   "small_agent", tasks),
 }
-print(render_comparison(reports))
+print(render_comparison(reports))   # table + moyennes
 ```
 
-**Gap closed** = `(small_agent − small) / (big − small)`. C'est le chiffre qui dit
-si l'agentic vaut son coût : 0 % = inutile, 100 % = le petit modèle encadré atteint
-le gros.
+Les deux solvers (`agent/eval/solvers.py`) :
+
+- `make_oneshot_solver` — le **plancher** : un appel modèle, zéro outil, zéro boucle.
+- `make_agent_solver` — la **couche agentic générique** : émet, puis **vérifie en exécutant**
+  (compile, pytest, smoke-run) et **renvoie l'erreur concrète au modèle** pour qu'il corrige,
+  en boucle bornée. Aucune logique propre à une tâche. Sa vérif est indépendante des `check.py`
+  de l'éval (ne pas tricher). C'est lui qui doit battre le plancher — et le delta le prouve.
 
 ## Ajouter une tâche
 

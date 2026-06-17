@@ -3,7 +3,9 @@ aussi, et le test fourni ne doit pas avoir été supprimé/vidé."""
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import subprocess
 import sys
 import uuid
@@ -13,7 +15,8 @@ from pathlib import Path
 def _load_median(workdir: Path):
     spec = importlib.util.spec_from_file_location(f"calc_{uuid.uuid4().hex}", workdir / "calc.py")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        spec.loader.exec_module(module)
     return getattr(module, "median")
 
 

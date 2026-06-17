@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import uuid
 from pathlib import Path
 
@@ -30,7 +32,9 @@ def _load(workdir: Path):
     path = Path(workdir) / "solution.py"
     spec = importlib.util.spec_from_file_location(f"sol_{uuid.uuid4().hex}", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Isole les effets de bord du code modèle (prints au niveau module, etc.).
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        spec.loader.exec_module(module)
     return module
 
 

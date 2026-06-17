@@ -246,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--oracle", action="store_true", help="lance le solver de référence (valide les checkers)")
     parser.add_argument("--list", action="store_true", help="liste les tâches")
     parser.add_argument("--only", nargs="*", help="restreint à ces tâches")
+    parser.add_argument("--model", help="chemin GGUF : lance un solver sur ce modèle")
+    parser.add_argument("--agent", action="store_true", help="avec --model : utilise la couche agentic au lieu de la baseline brute")
+    parser.add_argument("--label", default=None, help="label de run pour --model (défaut: small / small_agent)")
     args = parser.parse_args(argv)
 
     tasks = load_tasks(only=args.only)
@@ -259,6 +262,21 @@ def main(argv: list[str] | None = None) -> int:
         report = run_eval(lambda task: oracle_solver(task), "oracle", tasks)
         print(render_report(report))
         return 0 if report.mean_score > 0.999 else 1
+
+    if args.model:
+        from agent.eval.solvers import engine_chat, make_agent_solver, make_oneshot_solver
+
+        label = args.label or ("small_agent" if args.agent else "small")
+        chat = engine_chat(args.model)
+        try:
+            solver = make_agent_solver(chat) if args.agent else make_oneshot_solver(chat)
+            report = run_eval(lambda task: solver, label, tasks)
+        finally:
+            close = getattr(chat, "close", None)
+            if callable(close):
+                close()
+        print(render_report(report))
+        return 0
 
     parser.print_help()
     return 0
