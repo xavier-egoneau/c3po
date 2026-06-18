@@ -325,6 +325,54 @@ def _verify_workdir(workdir: Path) -> str:
         proc = subprocess.run([sys.executable, mains[0].name], cwd=workdir, capture_output=True, text=True)
         if proc.returncode != 0:
             issues.append(f"{mains[0].name} plante :\n" + proc.stderr.strip()[-400:])
+
+    web = _verify_web(workdir)
+    if web:
+        issues.append(web)
+    return "\n".join(issues)
+
+
+def _verify_web(workdir: Path) -> str:
+    """Vérif WEB via navigateur headless (Playwright) : charge chaque .html, clique chaque
+    bouton, et remonte les erreurs JS (pageerror / console.error) — câble les crashs du
+    type « mauvais id », « null.addEventListener », handler qui jette. Pendant web du check
+    Python. Dépendance OPTIONNELLE : si Playwright absent, on saute proprement."""
+    workdir = Path(workdir).resolve()  # as_uri() exige un chemin absolu
+    html_files = [p for p in sorted(workdir.rglob("*.html")) if "__pycache__" not in p.parts]
+    if not html_files:
+        return ""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return ""
+
+    issues: list[str] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            for html in html_files:
+                errors: list[str] = []
+                page = browser.new_page()
+                page.on("pageerror", lambda exc, acc=errors: acc.append(f"pageerror: {exc}"))
+                page.on(
+                    "console",
+                    lambda msg, acc=errors: acc.append(f"console.error: {msg.text}") if msg.type == "error" else None,
+                )
+                try:
+                    page.goto(html.as_uri(), wait_until="load", timeout=5000)
+                    for button in page.query_selector_all("button"):
+                        try:
+                            button.click(timeout=500)
+                        except Exception:  # noqa: BLE001 - un bouton non cliquable n'est pas l'erreur cherchée
+                            pass
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"chargement: {exc}")
+                page.close()
+                if errors:
+                    unique = " | ".join(dict.fromkeys(errors))
+                    issues.append(f"{html.relative_to(workdir)} (navigateur) : {unique[:400]}")
+        finally:
+            browser.close()
     return "\n".join(issues)
 
 
