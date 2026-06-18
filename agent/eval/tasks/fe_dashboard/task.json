@@ -1,0 +1,7 @@
+{
+  "name": "fe_dashboard",
+  "prompt": "Crée index.html (autonome, sans dépendance externe) : un tableau de bord. Dans le JS, pars EXACTEMENT de ces données : const orders=[{id:1,client:'Marie',montant:59},{id:2,client:'Karim',montant:128},{id:3,client:'Léa',montant:12}]. Affiche le nombre de commandes dans id='nb', le total des montants dans id='total', et une liste id='list' avec un élément par commande. Ajoute un bouton id='sort' qui retrie la liste par montant décroissant.",
+  "requires": [
+    "web"
+  ]
+}

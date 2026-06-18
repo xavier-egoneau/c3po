@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Éditeur enrichi</title></head>
+<body>
+  <h1>Éditeur enrichi</h1>
+  <div>
+    <button id="bold"><b>B</b></button>
+    <button id="italic"><i>I</i></button>
+  </div>
+  <div id="editor" contenteditable="true" style="border:1px solid #ccc;min-height:80px;padding:8px"></div>
+  <script>
+    const editor = document.getElementById('editor');
+    function apply(cmd) {
+      editor.focus();
+      document.execCommand(cmd, false, null);
+    }
+    for (const id of ['bold', 'italic']) {
+      const btn = document.getElementById(id);
+      // Empêche le bouton de voler la sélection au mousedown (le piège classique).
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.addEventListener('click', () => apply(id));
+    }
+  </script>
+</body>
+</html>

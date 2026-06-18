@@ -12,6 +12,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pre-commit>=3.0"]
+# Couche agent expérimentale : vérif web headless (le sidecar vision utilise llama_cpp, déjà requis).
+agent = ["playwright>=1.40"]
 
 [project.scripts]
 c3po = "llm_runtime.cli:main"

@@ -104,16 +104,30 @@ def make_oneshot_solver(chat: ChatFn) -> Solver:
     return _solve
 
 
-def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False) -> Solver:
+def make_agent_solver(
+    chat: ChatFn,
+    max_rounds: int = 3,
+    self_test: bool = False,
+    vision_check: bool = False,
+    vision_judge: ChatFn | None = None,
+    trace: list | None = None,
+) -> Solver:
     """Couche agentic GÉNÉRIQUE : émet les fichiers, les **vérifie en les exécutant**
-    (compile, tests, smoke-run), et **renvoie l'erreur concrète au modèle** pour qu'il
-    corrige — boucle bornée. Aucune logique propre à une tâche ni à un domaine.
+    (compile, tests, smoke-run, navigateur headless), et **renvoie l'erreur concrète au
+    modèle** pour qu'il corrige — boucle bornée. Aucune logique propre à une tâche.
 
-    Option `self_test` (OFF par défaut) : le modèle écrit aussi ses tests-sanité, qu'on exécute.
-    Mesuré régressif sur gemma-E2B (95%→90% : ses tests à expectations fausses lui font « corriger »
-    du code correct). Gardé pour expérimentation, désactivé par défaut.
+    Endurance/persévérance :
+    - `max_rounds` = budget de tours (1 émission + max_rounds-1 corrections).
+    - **anti-blocage** : si la même erreur revient à l'identique d'un tour à l'autre, on
+      arrête (persévérer aveuglément ne sert à rien — il manque un signal neuf).
+    - `trace` (liste optionnelle) : on y enregistre l'état de chaque tour
+      (`{round, ok, issues, stuck?, exhausted?}`) pour MESURER la trajectoire.
 
-    La vérification est la sienne, indépendante des checkers de l'éval (ne pas tricher).
+    `self_test` (OFF, mesuré régressif). `vision_check` (OFF, mesuré régressif aussi :
+    sur gemma le juge visuel statique a fait chuter fe_markdown 100%->29% — le rendu initial
+    d'un éditeur est vide par design, la vision le flagge à tort -> faux « fix »). Les seuls
+    signaux fiables restent DÉTERMINISTES (crash/syntaxe/pytest/erreur navigateur).
+    La vérif est indépendante des checkers de l'éval.
     """
 
     def _solve(prompt: str, workdir: Path) -> None:
@@ -125,14 +139,24 @@ def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False
         reply = chat(messages)
         _apply_reply(reply, prompt, workdir)
         state: dict[str, str] = {}
+        last_issues: str | None = None
 
         try:
-            for _ in range(max_rounds - 1):
+            for round_no in range(1, max_rounds):
                 issues = _verify_workdir(workdir)
                 if not issues and self_test:
                     issues = _self_test(chat, workdir, state)
+                if not issues and vision_check:
+                    issues = _verify_vision(workdir, prompt, chat, vision_judge)
+                if trace is not None:
+                    trace.append({"round": round_no, "ok": not issues, "issues": issues})
                 if not issues:
-                    return
+                    return  # convergé
+                if issues == last_issues:
+                    if trace is not None:
+                        trace[-1]["stuck"] = True
+                    return  # blocage : même erreur, pas de progrès -> inutile de continuer
+                last_issues = issues
                 messages.extend(
                     [
                         {"role": "assistant", "content": reply},
@@ -150,6 +174,9 @@ def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False
                 )
                 reply = chat(messages)
                 _apply_reply(reply, prompt, workdir)
+            if trace is not None:  # budget épuisé : état final
+                final = _verify_workdir(workdir)
+                trace.append({"round": max_rounds, "ok": not final, "issues": final, "exhausted": True})
         finally:
             _cleanup_selfcheck(workdir)
 
@@ -206,11 +233,74 @@ def _cleanup_selfcheck(workdir: Path) -> None:
 
 def _initial_user_message(prompt: str, workdir: Path) -> str:
     """Prompt + contexte du dossier de travail (fichiers déjà présents). Sans ça, on
-    demande au modèle de modifier des fichiers qu'il ne voit pas — baseline injuste."""
+    demande au modèle de modifier des fichiers qu'il ne voit pas — baseline injuste.
+    Version BRUTE : dump TOUT le dossier (sature un petit modèle si le repo est gros)."""
     existing = _render_current_files(Path(workdir))
     if existing.strip():
         return prompt + "\n\nFichiers déjà présents dans le dossier de travail :\n" + existing
     return prompt
+
+
+def make_context_solver(chat: ChatFn, max_files: int = 4) -> Solver:
+    """Égaliseur par le CONTEXTE : au lieu de dumper tout le dossier, on SÉLECTIONNE les
+    fichiers pertinents (nommés dans le prompt + clôture de leurs imports) et on ne donne
+    que ceux-là. Sur un gros dossier, ça évite de noyer un petit modèle. Générique."""
+
+    def _solve(prompt: str, workdir: Path) -> None:
+        workdir = Path(workdir)
+        selected = _select_context_files(prompt, workdir, max_files)
+        message = prompt
+        if selected:
+            message += "\n\nFichiers pertinents :\n" + _render_files(workdir, selected)
+        reply = chat([{"role": "system", "content": _INSTRUCTION}, {"role": "user", "content": message}])
+        _apply_reply(reply, prompt, workdir)
+
+    return _solve
+
+
+def _select_context_files(prompt: str, workdir: Path, max_files: int) -> list[str]:
+    workdir = Path(workdir)
+    all_files = {
+        p.relative_to(workdir).as_posix(): p
+        for p in sorted(workdir.rglob("*"))
+        if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("selfcheck_")
+    }
+    selected: list[str] = [rel for rel in all_files if Path(rel).name in prompt]
+    # Clôture des imports : un fichier sélectionné en tire d'autres réellement utiles.
+    frontier = list(selected)
+    while frontier and len(selected) < max_files * 3:
+        current = workdir / frontier.pop()
+        if current.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(current.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module.split(".")[0]]
+            for module in modules:
+                candidate = f"{module}.py"
+                if candidate in all_files and candidate not in selected:
+                    selected.append(candidate)
+                    frontier.append(candidate)
+    return selected[:max_files]
+
+
+def _render_files(workdir: Path, paths: list[str], max_chars: int = 4000) -> str:
+    workdir = Path(workdir)
+    parts: list[str] = []
+    for rel in paths:
+        path = workdir / rel
+        if path.is_file():
+            body = path.read_text(encoding="utf-8", errors="replace")
+            if len(body) > max_chars:
+                body = body[:max_chars] + "\n[...tronqué...]"
+            parts.append(f"```text path={rel}\n{body}\n```")
+    return "\n\n".join(parts)
 
 
 def _apply_reply(reply: str, prompt: str, workdir: Path) -> None:
@@ -262,7 +352,168 @@ def _verify_workdir(workdir: Path) -> str:
         proc = subprocess.run([sys.executable, mains[0].name], cwd=workdir, capture_output=True, text=True)
         if proc.returncode != 0:
             issues.append(f"{mains[0].name} plante :\n" + proc.stderr.strip()[-400:])
+
+    web = _verify_web(workdir)
+    if web:
+        issues.append(web)
     return "\n".join(issues)
+
+
+def _verify_web(workdir: Path) -> str:
+    """Vérif WEB via navigateur headless (Playwright) : charge chaque .html, clique chaque
+    bouton, et remonte les erreurs JS (pageerror / console.error) — câble les crashs du
+    type « mauvais id », « null.addEventListener », handler qui jette. Pendant web du check
+    Python. Dépendance OPTIONNELLE : si Playwright absent, on saute proprement."""
+    workdir = Path(workdir).resolve()  # as_uri() exige un chemin absolu
+    html_files = [p for p in sorted(workdir.rglob("*.html")) if "__pycache__" not in p.parts]
+    if not html_files:
+        return ""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return ""
+
+    issues: list[str] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            for html in html_files:
+                errors: list[str] = []
+                page = browser.new_page()
+                page.on("pageerror", lambda exc, acc=errors: acc.append(f"pageerror: {exc}"))
+                page.on(
+                    "console",
+                    lambda msg, acc=errors: acc.append(f"console.error: {msg.text}") if msg.type == "error" else None,
+                )
+                try:
+                    page.goto(html.as_uri(), wait_until="load", timeout=5000)
+                    for button in page.query_selector_all("button"):
+                        try:
+                            button.click(timeout=500)
+                        except Exception:  # noqa: BLE001 - un bouton non cliquable n'est pas l'erreur cherchée
+                            pass
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"chargement: {exc}")
+                page.close()
+                if errors:
+                    unique = " | ".join(dict.fromkeys(errors))
+                    issues.append(f"{html.relative_to(workdir)} (navigateur) : {unique[:400]}")
+        finally:
+            browser.close()
+    return "\n".join(issues)
+
+
+def _screenshot_html(html_path: Path) -> Path | None:
+    """Rend une page en navigateur headless et capture un PNG. None si Playwright absent."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+    shot = html_path.parent / "_vision_shot.png"
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(html_path.resolve().as_uri(), wait_until="load", timeout=5000)
+            page.screenshot(path=str(shot))
+        except Exception:  # noqa: BLE001
+            return None
+        finally:
+            browser.close()
+    return shot
+
+
+def _drive_and_screenshot(html_path: Path) -> Path | None:
+    """drive-then-look : rend la page, PILOTE l'UI génériquement (remplit textareas avec
+    un échantillon markdown, inputs texte avec une valeur, clique les boutons) PUIS capture.
+    Sans ça, l'état dépendant d'interaction (aperçu markdown, liste todo) reste invisible et
+    le juge se trompe. Générique — aucune règle par tâche."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+    sample_md = "# Grand Titre\n**texte en gras** *et italique*\n- premier point\n- second point"
+    shot = html_path.parent / "_vision_shot.png"
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(html_path.resolve().as_uri(), wait_until="load", timeout=5000)
+            for textarea in page.query_selector_all("textarea"):
+                try:
+                    textarea.fill(sample_md)
+                except Exception:  # noqa: BLE001
+                    pass
+            for field in page.query_selector_all("input[type=text], input:not([type])"):
+                try:
+                    field.fill("Élément de test")
+                except Exception:  # noqa: BLE001
+                    pass
+            for button in page.query_selector_all("button"):
+                try:
+                    button.click(timeout=500)
+                except Exception:  # noqa: BLE001
+                    pass
+            page.wait_for_timeout(200)
+            page.screenshot(path=str(shot))
+        except Exception:  # noqa: BLE001
+            return None
+        finally:
+            browser.close()
+    return shot
+
+
+def _verify_vision(workdir: Path, prompt: str, chat: ChatFn, judge: ChatFn | None = None) -> str:
+    """Signal SÉMANTIQUE pour le web : DRIVE-then-look (piloter l'UI puis screenshot) ->
+    le sidecar vision décrit l'état rendu -> un JUGE capable dit si l'intention est satisfaite.
+    Capte le « câblé mais inerte / liste vide / markdown non rendu » que le crash-check rate.
+
+    `judge` (sinon `chat`) : un modèle CAPABLE (mesuré : Qwen3-14B/Phi-4 fiables ; 2B/coder non).
+    Dépendances optionnelles (Playwright + sidecar vision) : si absentes, on saute. Tout tourne
+    en SUBPROCESS (swap multimodal/multi-modèle in-process = crash CUDA)."""
+    judge = judge or chat
+    workdir = Path(workdir).resolve()
+    html_files = [p for p in sorted(workdir.rglob("*.html")) if "__pycache__" not in p.parts]
+    if not html_files:
+        return ""
+    try:
+        from agent.structured import extract_json_object
+        from agent.vision.gemma4 import observe_image_subprocess
+    except ImportError:
+        return ""
+
+    shot = _drive_and_screenshot(html_files[0])
+    if shot is None:
+        return ""
+    try:
+        observation = observe_image_subprocess(shot)
+    except Exception:  # noqa: BLE001 - vision indisponible/échec -> pas de signal, on ne bloque pas
+        return ""
+    finally:
+        shot.unlink(missing_ok=True)
+
+    description = observation.get("parsed") or observation.get("raw") or ""
+    reply = judge(
+        [
+            {"role": "system", "content": "Tu juges si un rendu web satisfait une tâche, d'après une description visuelle neutre. Réponds uniquement en JSON."},
+            {
+                "role": "user",
+                "content": (
+                    f"Tâche demandée :\n{prompt}\n\n"
+                    f"Description automatique (vision) du rendu actuel :\n{description}\n\n"
+                    "Les éléments attendus sont-ils visiblement présents ET peuplés (listes non vides, "
+                    "valeurs affichées) ? Sois strict : une liste vide ou un élément manquant = non satisfait.\n"
+                    'Réponds : {"ok": true|false, "manque": "ce qui manque visiblement, sinon vide"}'
+                ),
+            },
+        ]
+    )
+    parsed = extract_json_object(reply)
+    if isinstance(parsed, dict) and parsed.get("ok") is False:
+        manque = str(parsed.get("manque", "")).strip()
+        if manque:
+            return "Vérif visuelle du rendu : " + manque[:200]
+    return ""
 
 
 def _render_current_files(workdir: Path, max_chars: int = 4000) -> str:
@@ -298,4 +549,47 @@ def engine_chat(
         return resp["choices"][0]["message"]["content"]
 
     chat.close = engine.close  # type: ignore[attr-defined]
+    return chat
+
+
+def chat_subprocess(
+    model: str | Path,
+    messages: list[Message],
+    *,
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+    timeout: float = 900,
+) -> str:
+    """Génère via un subprocess éphémère (un modèle par process). Évite le crash CUDA du
+    swap in-process : le process appelant ne tient AUCUN modèle GPU, chaque appel est isolé."""
+    import json as _json
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        req = Path(tmp) / "req.json"
+        out = Path(tmp) / "out.txt"
+        req.write_text(
+            _json.dumps({"model": str(model), "messages": messages, "temperature": temperature, "max_tokens": max_tokens}),
+            encoding="utf-8",
+        )
+        proc = subprocess.run(
+            [sys.executable, "-m", "agent.eval.chat_worker", str(req), str(out)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"chat_worker rc={proc.returncode} : {proc.stderr.strip()[-300:]}")
+        return out.read_text(encoding="utf-8") if out.exists() else ""
+
+
+def make_subprocess_chat(model: str | Path, *, temperature: float = 0.2, max_tokens: int = 4096) -> ChatFn:
+    """ChatFn drop-in où chaque appel tourne dans un subprocess éphémère (VRAM/CUDA-safe).
+    Permet d'orchestrer plusieurs modèles (petit solver + gros juge) sans swap in-process."""
+
+    def chat(messages: list[Message]) -> str:
+        return chat_subprocess(model, messages, temperature=temperature, max_tokens=max_tokens)
+
     return chat

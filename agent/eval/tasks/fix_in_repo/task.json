@@ -1,0 +1,5 @@
+{
+  "name": "fix_in_repo",
+  "prompt": "Dans ce dépôt Python, le test test_calc.py échoue à cause d'un bug dans calc.py. Corrige calc.py pour que les tests passent, sans casser le reste ni modifier les tests.",
+  "requires": []
+}

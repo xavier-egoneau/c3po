@@ -1,0 +1,7 @@
+{
+  "name": "fe_wysiwyg",
+  "prompt": "Crée index.html (autonome) : un éditeur de texte enrichi. Une zone id='editor' contenteditable, et deux boutons id='bold' et id='italic'. Sélectionner du texte puis cliquer un bouton applique le gras / l'italique à la sélection (le bouton ne doit pas faire perdre la sélection).",
+  "requires": [
+    "web"
+  ]
+}

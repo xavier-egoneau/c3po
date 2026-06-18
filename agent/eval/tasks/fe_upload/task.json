@@ -1,0 +1,7 @@
+{
+  "name": "fe_upload",
+  "prompt": "Crée index.html (autonome) : un module d'envoi de fichiers. Un input fichier id='file' (multiple) et une liste id='files'. Quand l'utilisateur sélectionne des fichiers, leurs noms s'affichent dans la liste, un <li> par fichier.",
+  "requires": [
+    "web"
+  ]
+}
