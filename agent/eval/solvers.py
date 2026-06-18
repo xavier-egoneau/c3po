@@ -108,6 +108,7 @@ def make_agent_solver(
     chat: ChatFn,
     max_rounds: int = 3,
     self_test: bool = False,
+    vision_check: bool = False,
     trace: list | None = None,
 ) -> Solver:
     """Couche agentic GÉNÉRIQUE : émet les fichiers, les **vérifie en les exécutant**
@@ -121,7 +122,11 @@ def make_agent_solver(
     - `trace` (liste optionnelle) : on y enregistre l'état de chaque tour
       (`{round, ok, issues, stuck?, exhausted?}`) pour MESURER la trajectoire.
 
-    `self_test` (OFF, mesuré régressif). La vérif est indépendante des checkers de l'éval.
+    `self_test` (OFF, mesuré régressif). `vision_check` (OFF, mesuré régressif aussi :
+    sur gemma le juge visuel statique a fait chuter fe_markdown 100%->29% — le rendu initial
+    d'un éditeur est vide par design, la vision le flagge à tort -> faux « fix »). Les seuls
+    signaux fiables restent DÉTERMINISTES (crash/syntaxe/pytest/erreur navigateur).
+    La vérif est indépendante des checkers de l'éval.
     """
 
     def _solve(prompt: str, workdir: Path) -> None:
@@ -140,6 +145,8 @@ def make_agent_solver(
                 issues = _verify_workdir(workdir)
                 if not issues and self_test:
                     issues = _self_test(chat, workdir, state)
+                if not issues and vision_check:
+                    issues = _verify_vision(workdir, prompt, chat)
                 if trace is not None:
                     trace.append({"round": round_no, "ok": not issues, "issues": issues})
                 if not issues:
@@ -393,6 +400,77 @@ def _verify_web(workdir: Path) -> str:
         finally:
             browser.close()
     return "\n".join(issues)
+
+
+def _screenshot_html(html_path: Path) -> Path | None:
+    """Rend une page en navigateur headless et capture un PNG. None si Playwright absent."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+    shot = html_path.parent / "_vision_shot.png"
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(html_path.resolve().as_uri(), wait_until="load", timeout=5000)
+            page.screenshot(path=str(shot))
+        except Exception:  # noqa: BLE001
+            return None
+        finally:
+            browser.close()
+    return shot
+
+
+def _verify_vision(workdir: Path, prompt: str, chat: ChatFn) -> str:
+    """Signal SÉMANTIQUE pour le web : rendre -> screenshot -> le sidecar vision décrit
+    l'état rendu -> le modèle juge si l'intention est visiblement satisfaite. Capte le
+    « câblé mais inerte / liste vide / page mangée » que le crash-check ne voit pas.
+
+    Dépendances optionnelles (Playwright + sidecar vision) : si absentes, on saute.
+    La vision tourne en SUBPROCESS (rechargement multimodal in-process = crash CUDA)."""
+    workdir = Path(workdir).resolve()
+    html_files = [p for p in sorted(workdir.rglob("*.html")) if "__pycache__" not in p.parts]
+    if not html_files:
+        return ""
+    try:
+        from agent.structured import extract_json_object
+        from agent.vision.gemma4 import observe_image_subprocess
+    except ImportError:
+        return ""
+
+    shot = _screenshot_html(html_files[0])
+    if shot is None:
+        return ""
+    try:
+        observation = observe_image_subprocess(shot)
+    except Exception:  # noqa: BLE001 - vision indisponible/échec -> pas de signal, on ne bloque pas
+        return ""
+    finally:
+        shot.unlink(missing_ok=True)
+
+    description = observation.get("parsed") or observation.get("raw") or ""
+    reply = chat(
+        [
+            {"role": "system", "content": "Tu juges si un rendu web satisfait une tâche, d'après une description visuelle neutre. Réponds uniquement en JSON."},
+            {
+                "role": "user",
+                "content": (
+                    f"Tâche demandée :\n{prompt}\n\n"
+                    f"Description automatique (vision) du rendu actuel :\n{description}\n\n"
+                    "Les éléments attendus sont-ils visiblement présents ET peuplés (listes non vides, "
+                    "valeurs affichées) ? Sois strict : une liste vide ou un élément manquant = non satisfait.\n"
+                    'Réponds : {"ok": true|false, "manque": "ce qui manque visiblement, sinon vide"}'
+                ),
+            },
+        ]
+    )
+    parsed = extract_json_object(reply)
+    if isinstance(parsed, dict) and parsed.get("ok") is False:
+        manque = str(parsed.get("manque", "")).strip()
+        if manque:
+            return "Vérif visuelle du rendu : " + manque[:200]
+    return ""
 
 
 def _render_current_files(workdir: Path, max_chars: int = 4000) -> str:
