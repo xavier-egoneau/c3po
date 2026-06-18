@@ -33,4 +33,15 @@ jobs:
           pip install -e . --no-deps
 
       - name: Run tests
-        run: pytest tests/ -v
+        # La suite est en cours de reconstruction après le refacto (agent/ repensé
+        # autour d'agent/eval/) : tests/ est vide pour l'instant. Exit code 5 de
+        # pytest = "aucun test collecté", à tolérer tant qu'il n'y a rien à
+        # tester ; tout autre code d'erreur reste bloquant.
+        run: |
+          set +e
+          pytest tests/ -v
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 5 ]; then
+            exit "$code"
+          fi

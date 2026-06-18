@@ -642,6 +642,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main():
+    # Sur Windows, la console hérite souvent d'un codepage legacy (cp1252) qui ne
+    # sait pas encoder les caractères Unicode utilisés dans l'affichage (─, ✓, ×, …)
+    # → UnicodeEncodeError. On force stdout/stderr en UTF-8 (errors="replace" en
+    # dernier recours pour ne jamais crasher l'affichage).
+    for stream in (sys.stdout, sys.stderr):
+        if stream.encoding and stream.encoding.lower() != "utf-8":
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = build_parser()
     args = parser.parse_args()
 
