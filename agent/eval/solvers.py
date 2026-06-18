@@ -109,6 +109,7 @@ def make_agent_solver(
     max_rounds: int = 3,
     self_test: bool = False,
     vision_check: bool = False,
+    vision_judge: ChatFn | None = None,
     trace: list | None = None,
 ) -> Solver:
     """Couche agentic GÉNÉRIQUE : émet les fichiers, les **vérifie en les exécutant**
@@ -146,7 +147,7 @@ def make_agent_solver(
                 if not issues and self_test:
                     issues = _self_test(chat, workdir, state)
                 if not issues and vision_check:
-                    issues = _verify_vision(workdir, prompt, chat)
+                    issues = _verify_vision(workdir, prompt, chat, vision_judge)
                 if trace is not None:
                     trace.append({"round": round_no, "ok": not issues, "issues": issues})
                 if not issues:
@@ -422,13 +423,55 @@ def _screenshot_html(html_path: Path) -> Path | None:
     return shot
 
 
-def _verify_vision(workdir: Path, prompt: str, chat: ChatFn) -> str:
-    """Signal SÉMANTIQUE pour le web : rendre -> screenshot -> le sidecar vision décrit
-    l'état rendu -> le modèle juge si l'intention est visiblement satisfaite. Capte le
-    « câblé mais inerte / liste vide / page mangée » que le crash-check ne voit pas.
+def _drive_and_screenshot(html_path: Path) -> Path | None:
+    """drive-then-look : rend la page, PILOTE l'UI génériquement (remplit textareas avec
+    un échantillon markdown, inputs texte avec une valeur, clique les boutons) PUIS capture.
+    Sans ça, l'état dépendant d'interaction (aperçu markdown, liste todo) reste invisible et
+    le juge se trompe. Générique — aucune règle par tâche."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+    sample_md = "# Grand Titre\n**texte en gras** *et italique*\n- premier point\n- second point"
+    shot = html_path.parent / "_vision_shot.png"
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(html_path.resolve().as_uri(), wait_until="load", timeout=5000)
+            for textarea in page.query_selector_all("textarea"):
+                try:
+                    textarea.fill(sample_md)
+                except Exception:  # noqa: BLE001
+                    pass
+            for field in page.query_selector_all("input[type=text], input:not([type])"):
+                try:
+                    field.fill("Élément de test")
+                except Exception:  # noqa: BLE001
+                    pass
+            for button in page.query_selector_all("button"):
+                try:
+                    button.click(timeout=500)
+                except Exception:  # noqa: BLE001
+                    pass
+            page.wait_for_timeout(200)
+            page.screenshot(path=str(shot))
+        except Exception:  # noqa: BLE001
+            return None
+        finally:
+            browser.close()
+    return shot
 
-    Dépendances optionnelles (Playwright + sidecar vision) : si absentes, on saute.
-    La vision tourne en SUBPROCESS (rechargement multimodal in-process = crash CUDA)."""
+
+def _verify_vision(workdir: Path, prompt: str, chat: ChatFn, judge: ChatFn | None = None) -> str:
+    """Signal SÉMANTIQUE pour le web : DRIVE-then-look (piloter l'UI puis screenshot) ->
+    le sidecar vision décrit l'état rendu -> un JUGE capable dit si l'intention est satisfaite.
+    Capte le « câblé mais inerte / liste vide / markdown non rendu » que le crash-check rate.
+
+    `judge` (sinon `chat`) : un modèle CAPABLE (mesuré : Qwen3-14B/Phi-4 fiables ; 2B/coder non).
+    Dépendances optionnelles (Playwright + sidecar vision) : si absentes, on saute. Tout tourne
+    en SUBPROCESS (swap multimodal/multi-modèle in-process = crash CUDA)."""
+    judge = judge or chat
     workdir = Path(workdir).resolve()
     html_files = [p for p in sorted(workdir.rglob("*.html")) if "__pycache__" not in p.parts]
     if not html_files:
@@ -439,7 +482,7 @@ def _verify_vision(workdir: Path, prompt: str, chat: ChatFn) -> str:
     except ImportError:
         return ""
 
-    shot = _screenshot_html(html_files[0])
+    shot = _drive_and_screenshot(html_files[0])
     if shot is None:
         return ""
     try:
@@ -450,7 +493,7 @@ def _verify_vision(workdir: Path, prompt: str, chat: ChatFn) -> str:
         shot.unlink(missing_ok=True)
 
     description = observation.get("parsed") or observation.get("raw") or ""
-    reply = chat(
+    reply = judge(
         [
             {"role": "system", "content": "Tu juges si un rendu web satisfait une tâche, d'après une description visuelle neutre. Réponds uniquement en JSON."},
             {
@@ -506,4 +549,47 @@ def engine_chat(
         return resp["choices"][0]["message"]["content"]
 
     chat.close = engine.close  # type: ignore[attr-defined]
+    return chat
+
+
+def chat_subprocess(
+    model: str | Path,
+    messages: list[Message],
+    *,
+    temperature: float = 0.2,
+    max_tokens: int = 4096,
+    timeout: float = 900,
+) -> str:
+    """Génère via un subprocess éphémère (un modèle par process). Évite le crash CUDA du
+    swap in-process : le process appelant ne tient AUCUN modèle GPU, chaque appel est isolé."""
+    import json as _json
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        req = Path(tmp) / "req.json"
+        out = Path(tmp) / "out.txt"
+        req.write_text(
+            _json.dumps({"model": str(model), "messages": messages, "temperature": temperature, "max_tokens": max_tokens}),
+            encoding="utf-8",
+        )
+        proc = subprocess.run(
+            [sys.executable, "-m", "agent.eval.chat_worker", str(req), str(out)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"chat_worker rc={proc.returncode} : {proc.stderr.strip()[-300:]}")
+        return out.read_text(encoding="utf-8") if out.exists() else ""
+
+
+def make_subprocess_chat(model: str | Path, *, temperature: float = 0.2, max_tokens: int = 4096) -> ChatFn:
+    """ChatFn drop-in où chaque appel tourne dans un subprocess éphémère (VRAM/CUDA-safe).
+    Permet d'orchestrer plusieurs modèles (petit solver + gros juge) sans swap in-process."""
+
+    def chat(messages: list[Message]) -> str:
+        return chat_subprocess(model, messages, temperature=temperature, max_tokens=max_tokens)
+
     return chat
