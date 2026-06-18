@@ -1,0 +1,7 @@
+body { font-family: sans-serif; max-width: 480px; margin: 2rem auto; }
+h1 { color: #333; }
+input { padding: .4rem; width: 60%; }
+button { padding: .4rem .8rem; margin-left: .25rem; }
+#todoList { list-style: none; padding: 0; }
+#todoList li { padding: .4rem; border-bottom: 1px solid #eee; }
+#count { font-weight: bold; }

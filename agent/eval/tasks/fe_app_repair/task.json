@@ -1,0 +1,7 @@
+{
+  "name": "fe_app_repair",
+  "prompt": "Cette petite application de liste de tâches (index.html + app.js + style.css) ne fonctionne pas : le JavaScript a plusieurs bugs. Répare app.js pour que l'ajout d'une tâche, le compteur et le bouton « Vider » fonctionnent. Ne modifie pas le HTML ni le CSS.",
+  "requires": [
+    "web"
+  ]
+}
