@@ -104,16 +104,24 @@ def make_oneshot_solver(chat: ChatFn) -> Solver:
     return _solve
 
 
-def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False) -> Solver:
+def make_agent_solver(
+    chat: ChatFn,
+    max_rounds: int = 3,
+    self_test: bool = False,
+    trace: list | None = None,
+) -> Solver:
     """Couche agentic GÉNÉRIQUE : émet les fichiers, les **vérifie en les exécutant**
-    (compile, tests, smoke-run), et **renvoie l'erreur concrète au modèle** pour qu'il
-    corrige — boucle bornée. Aucune logique propre à une tâche ni à un domaine.
+    (compile, tests, smoke-run, navigateur headless), et **renvoie l'erreur concrète au
+    modèle** pour qu'il corrige — boucle bornée. Aucune logique propre à une tâche.
 
-    Option `self_test` (OFF par défaut) : le modèle écrit aussi ses tests-sanité, qu'on exécute.
-    Mesuré régressif sur gemma-E2B (95%→90% : ses tests à expectations fausses lui font « corriger »
-    du code correct). Gardé pour expérimentation, désactivé par défaut.
+    Endurance/persévérance :
+    - `max_rounds` = budget de tours (1 émission + max_rounds-1 corrections).
+    - **anti-blocage** : si la même erreur revient à l'identique d'un tour à l'autre, on
+      arrête (persévérer aveuglément ne sert à rien — il manque un signal neuf).
+    - `trace` (liste optionnelle) : on y enregistre l'état de chaque tour
+      (`{round, ok, issues, stuck?, exhausted?}`) pour MESURER la trajectoire.
 
-    La vérification est la sienne, indépendante des checkers de l'éval (ne pas tricher).
+    `self_test` (OFF, mesuré régressif). La vérif est indépendante des checkers de l'éval.
     """
 
     def _solve(prompt: str, workdir: Path) -> None:
@@ -125,14 +133,22 @@ def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False
         reply = chat(messages)
         _apply_reply(reply, prompt, workdir)
         state: dict[str, str] = {}
+        last_issues: str | None = None
 
         try:
-            for _ in range(max_rounds - 1):
+            for round_no in range(1, max_rounds):
                 issues = _verify_workdir(workdir)
                 if not issues and self_test:
                     issues = _self_test(chat, workdir, state)
+                if trace is not None:
+                    trace.append({"round": round_no, "ok": not issues, "issues": issues})
                 if not issues:
-                    return
+                    return  # convergé
+                if issues == last_issues:
+                    if trace is not None:
+                        trace[-1]["stuck"] = True
+                    return  # blocage : même erreur, pas de progrès -> inutile de continuer
+                last_issues = issues
                 messages.extend(
                     [
                         {"role": "assistant", "content": reply},
@@ -150,6 +166,9 @@ def make_agent_solver(chat: ChatFn, max_rounds: int = 3, self_test: bool = False
                 )
                 reply = chat(messages)
                 _apply_reply(reply, prompt, workdir)
+            if trace is not None:  # budget épuisé : état final
+                final = _verify_workdir(workdir)
+                trace.append({"round": max_rounds, "ok": not final, "issues": final, "exhausted": True})
         finally:
             _cleanup_selfcheck(workdir)
 

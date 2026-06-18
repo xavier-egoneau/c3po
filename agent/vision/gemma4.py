@@ -126,13 +126,42 @@ def _run_gemma4_vision(
         chat_handler=handler,
         verbose=False,
     )
-    result = llm.create_chat_completion(
-        messages=vision_messages(image, prompt),
-        max_tokens=max_tokens,
-        temperature=temperature,
-        stream=False,
-    )
-    return result["choices"][0]["message"]["content"]
+    try:
+        result = llm.create_chat_completion(
+            messages=vision_messages(image, prompt),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=False,
+        )
+        return result["choices"][0]["message"]["content"]
+    finally:
+        # Libération VRAM explicite et déterministe (CUDA : sinon fuite cumulée à chaque
+        # appel + risque de ggml_cuda_error au chargement suivant). On ferme le modèle ET
+        # le handler (qui tient le projecteur mmproj sur GPU), puis on force le GC.
+        _free_vision(llm, handler)
+
+
+def _free_vision(llm, handler) -> None:
+    import gc
+
+    # ORDRE CRUCIAL : le contexte mmproj (mtmd) référence le modèle llama (créé via
+    # mtmd_init_from_file(..., llama_model.model, ...)). On libère donc le mmproj D'ABORD
+    # (son _exit_stack tient le callback mtmd_free), puis le modèle. L'inverse fait un
+    # use-after-free -> segfault CUDA.
+    stack = getattr(handler, "_exit_stack", None)
+    if stack is not None:
+        try:
+            stack.close()
+        except Exception:  # noqa: BLE001 - best-effort, ne jamais masquer le résultat
+            pass
+    close = getattr(llm, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:  # noqa: BLE001
+            pass
+    del llm, handler
+    gc.collect()
 
 
 def vision_messages(image_path: str | Path, prompt: str) -> list[dict]:
@@ -179,3 +208,58 @@ def _mmproj_sort_key(path: Path) -> tuple[int, int, str]:
     name = path.stem.upper()
     rank = next((v for q, v in preference.items() if q in name), 99)
     return (rank, path.stat().st_size, path.name)
+
+
+def observe_image_subprocess(
+    image_path: str | Path,
+    model: str = DEFAULT_MODEL,
+    timeout: float = 240,
+) -> dict:
+    """Vision en process ÉPHÉMÈRE (recommandé pour un usage répété).
+
+    Charger un modèle multimodal puis le recharger in-process crashe sur CUDA
+    (GGML_ASSERT max_blocks_per_sm > 0). Un subprocess par appel rend tout proprement
+    à sa sortie : pas de rechargement in-process, pas de fuite, pas d'assert.
+
+    Renvoie {"raw", "parsed", "errors"}.
+    """
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "agent.vision.gemma4", "--json", "--model", model, str(image_path)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"vision subprocess (rc={proc.returncode}) : {proc.stderr.strip()[-300:]}")
+    for line in reversed(proc.stdout.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    raise RuntimeError(f"vision subprocess : pas de JSON en sortie. stdout={proc.stdout.strip()[-300:]}")
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Sidecar vision Gemma-4 : image -> observation JSON.")
+    parser.add_argument("image", help="chemin de l'image")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--json", action="store_true", help="sortie machine : une ligne JSON {raw,parsed,errors}")
+    args = parser.parse_args(argv)
+
+    result = observe_image(args.image, model=args.model)
+    if args.json:
+        print(json.dumps({"raw": result.raw, "parsed": result.parsed, "errors": result.errors}, ensure_ascii=False))
+    else:
+        print(format_observation(result))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

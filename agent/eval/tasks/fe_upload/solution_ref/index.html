@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Upload</title></head>
+<body>
+  <h1>Envoi de fichiers</h1>
+  <input type="file" id="file" multiple>
+  <ul id="files"></ul>
+  <script>
+    document.getElementById('file').addEventListener('change', (e) => {
+      const list = document.getElementById('files');
+      list.innerHTML = '';
+      for (const f of e.target.files) {
+        const li = document.createElement('li');
+        li.textContent = f.name;
+        list.appendChild(li);
+      }
+    });
+  </script>
+</body>
+</html>

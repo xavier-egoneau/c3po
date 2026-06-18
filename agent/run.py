@@ -96,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--solver", choices=list(SOLVERS), default="context")
     ap.add_argument("--dir", help="dossier de travail (contexte lu + fichiers écrits). défaut : test/adhoc")
     ap.add_argument("--chat", action="store_true", help="mode itératif : tu donnes des retours, le modèle révise (idéal pour HTML/JS visuel)")
+    ap.add_argument("--rounds", type=int, default=3, help="budget de tours pour --solver loop (endurance)")
     args = ap.parse_args(argv)
 
     workdir = Path(args.dir).resolve() if args.dir else SCRATCH
@@ -113,8 +114,14 @@ def main(argv: list[str] | None = None) -> int:
             run_interactive(chat, workdir, args.task)
         else:
             before = _snapshot(workdir)
-            SOLVERS[args.solver](chat)(args.task, workdir)
+            trace: list = []
+            solver = make_agent_solver(chat, max_rounds=args.rounds, trace=trace) if args.solver == "loop" else SOLVERS[args.solver](chat)
+            solver(args.task, workdir)
             _report_changes(workdir, before)
+            for step in trace:
+                tag = " BLOQUÉ" if step.get("stuck") else (" (budget épuisé)" if step.get("exhausted") else "")
+                print(f"  tour {step['round']}: {'ok' if step['ok'] else 'à corriger'}{tag}"
+                      + (f" — {step['issues'][:80]}" if step.get("issues") else ""))
     finally:
         close = getattr(chat, "close", None)
         if callable(close):

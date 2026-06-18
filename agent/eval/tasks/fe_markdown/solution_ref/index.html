@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Éditeur Markdown</title></head>
+<body>
+  <h1>Éditeur Markdown</h1>
+  <textarea id="md" rows="10" cols="40"></textarea>
+  <div id="preview"></div>
+  <script>
+    function inline(t) {
+      return t
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>');
+    }
+    function mdToHtml(src) {
+      const lines = src.split('\n');
+      let html = '';
+      let inList = false;
+      const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+      for (const line of lines) {
+        let m;
+        if ((m = line.match(/^## (.*)/))) { closeList(); html += '<h2>' + inline(m[1]) + '</h2>'; }
+        else if ((m = line.match(/^# (.*)/))) { closeList(); html += '<h1>' + inline(m[1]) + '</h1>'; }
+        else if ((m = line.match(/^- (.*)/))) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + inline(m[1]) + '</li>'; }
+        else { closeList(); if (line.trim()) html += '<p>' + inline(line) + '</p>'; }
+      }
+      closeList();
+      return html;
+    }
+    const md = document.getElementById('md');
+    const preview = document.getElementById('preview');
+    md.addEventListener('input', () => { preview.innerHTML = mdToHtml(md.value); });
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "name": "fe_markdown",
+  "prompt": "Crée index.html (autonome) : un éditeur Markdown avec aperçu en direct. Une textarea id='md' et un aperçu id='preview'. Quand on tape, l'aperçu affiche le rendu HTML. Gère au minimum : titres (# et ##), gras (**texte**), italique (*texte*) et listes à puces (- item).",
+  "requires": [
+    "web"
+  ]
+}

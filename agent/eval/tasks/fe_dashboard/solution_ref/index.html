@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Tableau de bord</title></head>
+<body>
+  <h1>Tableau de bord</h1>
+  <p>Commandes : <span id="nb"></span></p>
+  <p>Total : <span id="total"></span> €</p>
+  <button id="sort">Trier par montant décroissant</button>
+  <ul id="list"></ul>
+  <script>
+    const orders = [
+      { id: 1, client: 'Marie', montant: 59 },
+      { id: 2, client: 'Karim', montant: 128 },
+      { id: 3, client: 'Léa', montant: 12 },
+    ];
+    function render(data) {
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      for (const o of data) {
+        const li = document.createElement('li');
+        li.textContent = `#${o.id} ${o.client} — ${o.montant} €`;
+        list.appendChild(li);
+      }
+    }
+    document.getElementById('nb').textContent = orders.length;
+    document.getElementById('total').textContent = orders.reduce((s, o) => s + o.montant, 0);
+    render(orders);
+    document.getElementById('sort').addEventListener('click', () => {
+      render([...orders].sort((a, b) => b.montant - a.montant));
+    });
+  </script>
+</body>
+</html>
