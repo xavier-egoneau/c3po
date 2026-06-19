@@ -23,12 +23,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from .context import equalize_messages
 from .engine import Engine
 from .hardware import detect_hardware
 from .models import find_model, list_models, best_model
 
 
 app = FastAPI(title="llm-runtime", description="API compatible OpenAI pour llama.cpp")
+
+# Mode « égaliseur » (voie B), opt-in via `c3po serve --equalize` : compense de façon
+# TRANSPARENTE la fenêtre de contexte d'un petit modèle (compacte pour ne jamais dépasser
+# n_ctx + borne la génération) → l'agent au-dessus l'appelle sans risque d'overflow. Off par
+# défaut (principe « pas de magie silencieuse » du runtime).
+_EQUALIZE = os.environ.get("LLM_RUNTIME_EQUALIZE") == "1"
 
 _engine: Engine | None = None
 _model_path: Path | None = None
@@ -140,13 +147,17 @@ def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(status_code=503, detail=str(e))
 
     messages = [m.model_dump() for m in request.messages]
+    max_tokens = request.max_tokens
+    if _EQUALIZE:
+        with _engine_lock:
+            messages, max_tokens, _compacted = equalize_messages(engine, messages, request.max_tokens)
 
     if request.stream:
         def event_stream():
             with _engine_lock:
                 for chunk in engine.chat(
                     messages,
-                    max_tokens=request.max_tokens,
+                    max_tokens=max_tokens,
                     temperature=request.temperature,
                     stream=True,
                 ):
@@ -158,7 +169,7 @@ def chat_completions(request: ChatCompletionRequest):
     with _engine_lock:
         return engine.chat(
             messages,
-            max_tokens=request.max_tokens,
+            max_tokens=max_tokens,
             temperature=request.temperature,
             stream=False,
         )

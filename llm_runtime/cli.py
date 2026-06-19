@@ -338,8 +338,12 @@ def cmd_serve(args):
         env["LLM_RUNTIME_SPECULATIVE"] = "1"
     if args.repeat_penalty is not None:
         env["LLM_RUNTIME_REPEAT_PENALTY"] = str(args.repeat_penalty)
+    if getattr(args, "equalize", False):
+        env["LLM_RUNTIME_EQUALIZE"] = "1"
 
     print(f"Démarrage du serveur sur http://{args.host}:{args.port}")
+    if getattr(args, "equalize", False):
+        print("Mode égaliseur : compaction transparente du contexte (anti-overflow) activée.")
     if args.host == "0.0.0.0":
         print("⚠️  Écoute sur toutes les interfaces réseau, sans authentification.")
     if model_path:
@@ -617,6 +621,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1",
                          help="Interface d'écoute (défaut: 127.0.0.1 ; 0.0.0.0 pour exposer sur le réseau)")
     p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument("--equalize", action="store_true",
+                         help="Compense la fenêtre de contexte du petit modèle : compacte les requêtes "
+                              "trop grosses pour ne jamais dépasser n_ctx (transparent pour l'appelant, "
+                              "pas de crash d'overflow). Off par défaut.")
     _add_engine_args(p_serve)
 
     # batch
