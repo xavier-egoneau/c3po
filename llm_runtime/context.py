@@ -82,3 +82,82 @@ def _safe_max_tokens(engine: Any, messages: list[dict], requested: int | None, n
     if requested is None or requested <= 0:
         return available
     return min(requested, available)
+
+
+def has_content(result: dict) -> bool:
+    """Une complétion a-t-elle un contenu non vide ? (pour le retry transparent)"""
+    try:
+        return bool(result["choices"][0]["message"]["content"].strip())
+    except Exception:  # noqa: BLE001
+        return True  # dans le doute, ne pas re-générer
+
+
+def route_vision_messages(messages: list[dict]) -> tuple[list[dict], bool]:
+    """Routage vision (voie B) : si un message contient une image (format multimodal OpenAI :
+    `content` = liste avec un part `image_url`), on la décrit via le **sidecar vision** et on
+    remplace l'image par sa description texte. → un modèle TEXTE 'voit' les images, de façon
+    transparente pour l'appelant. Sidecar absent/échec → l'image devient une note, pas un crash."""
+    if not any(isinstance(m.get("content"), list) for m in messages):
+        return messages, False
+
+    describe = _get_image_describer()
+    routed: list[dict] = []
+    used = False
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            routed.append(message)
+            continue
+        parts: list[str] = []
+        for part in content:
+            kind = part.get("type")
+            if kind == "text":
+                parts.append(str(part.get("text", "")))
+            elif kind in ("image_url", "input_image"):
+                url = (part.get("image_url") or {}).get("url", "") if kind == "image_url" else part.get("image_url", "")
+                desc = describe(url) if describe else None
+                used = used or bool(desc)
+                parts.append(f"[Image (décrite automatiquement par le sidecar vision) : {desc}]"
+                             if desc else "[Image fournie mais non décrite (sidecar vision indisponible)]")
+        routed.append({**message, "content": "\n".join(p for p in parts if p)})
+    return routed, used
+
+
+def _get_image_describer():
+    """Renvoie une fonction url->description (texte), ou None si le sidecar est indisponible."""
+    try:
+        from agent.vision.gemma4 import observe_image_subprocess
+    except Exception:  # noqa: BLE001 - sidecar/agent absent -> routage dégradé proprement
+        return None
+
+    import base64
+    import os
+    import tempfile
+    import urllib.request
+
+    def describe(url: str) -> str | None:
+        try:
+            if url.startswith("data:"):
+                data = base64.b64decode(url.split(",", 1)[1])
+            elif url.startswith(("http://", "https://")):
+                data = urllib.request.urlopen(url, timeout=10).read()  # noqa: S310
+            elif url.startswith("file://"):
+                data = open(url[7:], "rb").read()
+            else:
+                return None
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+                handle.write(data)
+                path = handle.name
+            try:
+                observation = observe_image_subprocess(path)
+            finally:
+                os.unlink(path)
+            parsed = observation.get("parsed") or {}
+            caption = str(parsed.get("caption", "")).strip()
+            ocr = parsed.get("ocr") or []
+            text = caption + (" | texte visible : " + ", ".join(map(str, ocr)) if ocr else "")
+            return text.strip() or (observation.get("raw") or None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    return describe

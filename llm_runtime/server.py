@@ -17,13 +17,13 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .context import equalize_messages
+from .context import equalize_messages, has_content, route_vision_messages
 from .engine import Engine
 from .hardware import detect_hardware
 from .models import find_model, list_models, best_model
@@ -109,7 +109,7 @@ def get_engine(model_query: str | None = None) -> Engine:
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Any  # str (texte) ou liste de parts (multimodal OpenAI) — routée via le sidecar vision en mode --equalize
 
 
 class ChatCompletionRequest(BaseModel):
@@ -149,6 +149,8 @@ def chat_completions(request: ChatCompletionRequest):
     messages = [m.model_dump() for m in request.messages]
     max_tokens = request.max_tokens
     if _EQUALIZE:
+        # Routage vision (image → description via sidecar) puis compaction anti-overflow.
+        messages, _routed = route_vision_messages(messages)
         with _engine_lock:
             messages, max_tokens, _compacted = equalize_messages(engine, messages, request.max_tokens)
 
@@ -167,12 +169,24 @@ def chat_completions(request: ChatCompletionRequest):
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     with _engine_lock:
-        return engine.chat(
+        result = engine.chat(
             messages,
             max_tokens=max_tokens,
             temperature=request.temperature,
             stream=False,
         )
+        # Retry transparent sur sortie VIDE (signal déterministe, jamais sur le "contenu faux"
+        # qu'on ne sait pas juger). On monte un peu la température pour casser un cas dégénéré.
+        attempts = 0
+        while _EQUALIZE and attempts < 2 and not has_content(result):
+            attempts += 1
+            result = engine.chat(
+                messages,
+                max_tokens=max_tokens,
+                temperature=min(1.0, request.temperature + 0.2 * attempts),
+                stream=False,
+            )
+        return result
 
 
 @app.get("/health")
