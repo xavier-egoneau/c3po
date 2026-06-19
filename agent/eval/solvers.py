@@ -265,36 +265,14 @@ def _select_context_files(prompt: str, workdir: Path, max_files: int) -> list[st
         for p in sorted(workdir.rglob("*"))
         if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("selfcheck_")
     }
-    selected: list[str] = [rel for rel in all_files if Path(rel).name in prompt]
-    # Clôture des imports : un fichier sélectionné en tire d'autres réellement utiles.
-    frontier = list(selected)
-    while frontier and len(selected) < max_files * 3:
-        current = workdir / frontier.pop()
-        if current.suffix != ".py":
-            continue
-        try:
-            tree = ast.parse(current.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            modules: list[str] = []
-            if isinstance(node, ast.Import):
-                modules = [alias.name.split(".")[0] for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                modules = [node.module.split(".")[0]]
-            for module in modules:
-                candidate = f"{module}.py"
-                if candidate in all_files and candidate not in selected:
-                    selected.append(candidate)
-                    frontier.append(candidate)
-
-    # Pertinence par CONTENU : si le fichier utile n'est pas nommé dans le prompt, on le
-    # retrouve via les mots-clés/identifiants du prompt présents dans le CONTENU des fichiers.
-    if len(selected) < max_files:
-        keywords = _prompt_keywords(prompt)
+    # GRAINES : fichiers nommés dans le prompt, puis pertinence par CONTENU (mots-clés du
+    # prompt présents dans le contenu — retrouve le fichier utile même non nommé).
+    seeds: list[str] = [rel for rel in all_files if Path(rel).name in prompt]
+    keywords = _prompt_keywords(prompt)
+    if keywords:
         scored: list[tuple[int, int, str]] = []
         for rel, path in all_files.items():
-            if rel in selected:
+            if rel in seeds:
                 continue
             try:
                 content = path.read_text(encoding="utf-8", errors="replace").lower()
@@ -304,10 +282,35 @@ def _select_context_files(prompt: str, workdir: Path, max_files: int) -> list[st
             if score:
                 scored.append((score, len(content), rel))
         scored.sort(key=lambda item: (-item[0], item[1]))  # plus pertinent, puis plus court
-        for _, _, rel in scored:
-            if len(selected) >= max_files:
-                break
-            selected.append(rel)
+        seeds.extend(rel for _, _, rel in scored)
+
+    # BFS depuis les graines + CLÔTURE D'IMPORTS, sur TOUTES les graines : un fichier importé
+    # par une graine est ramené EN PRIORITÉ (le vrai bug est souvent dans le module importé,
+    # pas dans le point d'entrée nommé/pertinent).
+    selected: list[str] = []
+    queue: list[str] = list(seeds)
+    while queue and len(selected) < max_files:
+        rel = queue.pop(0)
+        if rel in selected:
+            continue
+        selected.append(rel)
+        path = workdir / rel
+        if path.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        imported: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported += [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module.split(".")[0])
+        for module in imported:
+            candidate = f"{module}.py"
+            if candidate in all_files and candidate not in selected and candidate not in queue:
+                queue.insert(0, candidate)  # priorité : juste après son importeur
     return selected[:max_files]
 
 
@@ -321,7 +324,12 @@ _KW_STOP = {
 
 def _prompt_keywords(prompt: str) -> set[str]:
     """Identifiants/mots-clés significatifs du prompt (pour la pertinence par contenu).
-    Priorise les termes entre `backticks` (souvent des identifiants de code)."""
+    Priorise les termes entre `backticks` (souvent des identifiants de code). On DÉ-ACCENTUE
+    d'abord : sinon un accent casse la regex et produit des fragments ('éléments'->'ments')
+    qui matchent des fichiers au hasard (ex. 'payments')."""
+    import unicodedata
+
+    prompt = "".join(c for c in unicodedata.normalize("NFKD", prompt) if not unicodedata.combining(c))
     keywords: set[str] = set()
     for span in re.findall(r"`([^`]+)`", prompt):
         for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", span):

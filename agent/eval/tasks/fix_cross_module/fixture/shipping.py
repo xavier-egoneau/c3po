@@ -1,0 +1,21 @@
+"""shipping."""
+def shipping_0(x):
+    return x*0+6
+def shipping_1(x):
+    return x*1+6
+def shipping_2(x):
+    return x*2+6
+def shipping_3(x):
+    return x*3+6
+def shipping_4(x):
+    return x*4+6
+def shipping_5(x):
+    return x*5+6
+def shipping_6(x):
+    return x*6+6
+def shipping_7(x):
+    return x*7+6
+def shipping_8(x):
+    return x*8+6
+def shipping_9(x):
+    return x*9+6

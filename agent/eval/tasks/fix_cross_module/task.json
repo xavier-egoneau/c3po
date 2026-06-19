@@ -1,0 +1,5 @@
+{
+  "name": "fix_cross_module",
+  "prompt": "La fonction `monthly_report` renvoie une médiane fausse quand il y a un nombre PAIR de valeurs (elle prend l'élément du milieu au lieu de la moyenne des deux du milieu). Trouve et corrige la cause, sans casser le reste.",
+  "requires": []
+}

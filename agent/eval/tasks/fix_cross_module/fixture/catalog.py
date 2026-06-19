@@ -1,0 +1,21 @@
+"""catalog."""
+def catalog_0(x):
+    return x*0+5
+def catalog_1(x):
+    return x*1+5
+def catalog_2(x):
+    return x*2+5
+def catalog_3(x):
+    return x*3+5
+def catalog_4(x):
+    return x*4+5
+def catalog_5(x):
+    return x*5+5
+def catalog_6(x):
+    return x*6+5
+def catalog_7(x):
+    return x*7+5
+def catalog_8(x):
+    return x*8+5
+def catalog_9(x):
+    return x*9+5
