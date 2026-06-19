@@ -251,7 +251,12 @@ def make_context_solver(chat: ChatFn, max_files: int = 4) -> Solver:
         selected = _select_context_files(prompt, workdir, max_files)
         message = prompt
         if selected:
-            message += "\n\nFichiers pertinents :\n" + _render_files(workdir, selected, keywords=_prompt_keywords(prompt))
+            # Budget de contexte dérivé du n_ctx réel du modèle (~1 char/token = conservateur,
+            # laisse de la place au prompt + à la réponse) ; jamais d'overflow -> jamais de crash.
+            budget = max(2000, getattr(chat, "n_ctx", 8192))
+            message += "\n\nFichiers pertinents :\n" + _render_files(
+                workdir, selected, total_budget=budget, keywords=_prompt_keywords(prompt)
+            )
         reply = chat([{"role": "system", "content": _INSTRUCTION}, {"role": "user", "content": message}])
         _apply_reply(reply, prompt, workdir)
 
@@ -641,6 +646,7 @@ def engine_chat(
         return resp["choices"][0]["message"]["content"]
 
     chat.close = engine.close  # type: ignore[attr-defined]
+    chat.n_ctx = engine.params.n_ctx  # type: ignore[attr-defined]
     return chat
 
 
@@ -684,4 +690,5 @@ def make_subprocess_chat(model: str | Path, *, temperature: float = 0.2, max_tok
     def chat(messages: list[Message]) -> str:
         return chat_subprocess(model, messages, temperature=temperature, max_tokens=max_tokens)
 
+    chat.n_ctx = 8192  # type: ignore[attr-defined]  # le worker charge avec engine_chat (n_ctx=8192)
     return chat
