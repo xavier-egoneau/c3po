@@ -779,6 +779,62 @@ Suite à la revue : nettoyage de dette concrète.
   (`urllib.error.URLError`, `OSError`, et `ValueError` côté inspection de repo). Les erreurs
   inattendues (bugs) remontent au lieu d'être déguisées en « échec de téléchargement ».
 
+## Phase 23 — Recadrage identité + ménage de la couche agent (17-18/06/2026) ✅
+
+Recentrage : c3po = **runtime local + couche agentic « égaliseur »** (rapprocher un petit modèle
+local d'un modèle frontier). Distinction clé : *agency de service* (faire que CE modèle réponde au
+mieux → runtime) vs *agency de tâche* (planifier/auditer le livrable → l'agent appelant, ex. BB9).
+
+- L'ancien scaffold (`agent/artifact_audit.py` ~1000 l, `model_compare`/goal-loop) faisait de
+  l'agency de tâche → **opinioné → overfit** à un seul prompt (éditeur WYSIWYG : checklist
+  bold/italic/table, gates à mots-clés FR). **Supprimé**, archivé dans la branche
+  `archive/scaffold-overfit-2026-06` (récupérable). `tests/`, `experiments/`, `models/` (GGUF local)
+  également retirés au ménage.
+
+## Phase 24 — Harnais d'éval à checkers exécutables (`agent/eval/`) ✅
+
+Garde-fou anti-overfit : **mesurer avant de coder l'agentic**. Tâche = prompt + `check.py`
+**exécutable** (import/subprocess/parse, jamais de checklist de domaine ni juge LLM) + `solution_ref`
+(oracle déterministe). Solver injectable `(prompt, workdir)->fichiers`. Sandbox étanche `test/`
+(`_assert_sandboxed`). Métrique : taux de réussite absolu + delta. `python -m agent.eval --oracle`
+valide les checkers.
+
+## Phase 25 — Égaliseur : le contexte domine, pas la boucle ✅
+
+Mesuré (RTX 4070, gemma-2B / coder-14B) :
+- La **boucle de feedback** (émettre→vérifier-exécuter→corriger) apporte **+0 %** une fois la
+  baseline rendue équitable (un « +13 % » initial était un artefact : l'oneshot ne montrait pas les
+  fichiers existants au modèle).
+- Le **vrai levier = la sélection/fourniture de contexte** : sur un dossier bruité, dumper tout
+  noie/CRASHE un petit modèle ; sélectionner les fichiers utiles → **+17 % / 0%→100 %**.
+- `make_context_solver` = solver phare. `agent/run.py` (+ `--chat`) lance un solver sur une vraie
+  tâche ; `--chat` = itération humaine (recours fiable pour le sémantique).
+
+## Phase 26 — Vérif web (Playwright) + sidecar vision + signal sémantique ✅
+
+- **Vérif web déterministe** : Playwright headless charge le HTML, clique, capte les crashes JS
+  (pageerror) → la boucle les corrige.
+- **Sidecar vision restauré et fonctionnel** (`agent/vision/gemma4.py`, gemma-4 + `mmproj`). Bug
+  VRAM corrigé (`_exit_stack.close()` du `MTMDChatHandler`, ordre mmproj→modèle). Le **rechargement
+  multimodal in-process crashe sur CUDA** → `observe_image_subprocess()` (un process/appel). Idem
+  pour orchestrer petit solver + gros juge : `chat_worker` + `make_subprocess_chat`.
+- **Signal sémantique** : un juge LLM sur screenshot **statique** régresse (faux flags) ; il MARCHE
+  avec **drive-then-look** (piloter l'UI puis regarder) + un **juge capable et reasoning ~14B**
+  (Qwen3-14B / Phi-4-reasoning OK ; coder-14B et ≤2B non). Mesuré : se convertit en lift avec un
+  solver capable, mais reste probabiliste. `self_test` et `vision_check` statique = régressifs (off).
+  Frontière retenue : machine = déterministe (crashes), humain = sémantique (`--chat`).
+
+## Phase 27 — RAG : sélecteur de contexte robuste ✅
+
+Développement du levier prouvé (sélection de contexte), tâches synthétiques discriminantes :
+- **pertinence par contenu** (trouve un fichier non nommé via les mots-clés du prompt, dé-accentués) ;
+- **multi-fichiers** : clôture d'imports sur toutes les graines (le bug est souvent dans un module
+  importé) ;
+- **rendu budget-aware** : fichier entier tant qu'il tient (un fragment ferait réémettre un fichier
+  incomplet), compaction du débordement autour des mots-clés ;
+- **budget dérivé du `n_ctx` réel** → plus jamais d'overflow/ValueError quelle que soit la fenêtre.
+Mesuré gemma-2B : 4 tâches RAG toutes 100 % en context-select / crash en dump-all.
+
 ## Architecture cible complète
 ```
 [utilisateur]
