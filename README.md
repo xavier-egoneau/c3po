@@ -112,12 +112,23 @@ un, sans encore brancher le runtime image/audio.
 ## Développement
 
 ```bash
-python3 -m pytest tests/ -v
 pre-commit install
 
 # Bench perf local reproductible (hors CI)
 scripts/bench_perf.sh
 ```
+
+> **Note tests** : la suite `tests/` de logique pure du runtime a été supprimée lors d'un
+> ménage et reste à réécrire. La vérif automatique déterministe actuelle est l'oracle du
+> harnais d'éval : `python -m agent.eval --oracle`.
+
+## Couche `agent/` (expérimentale)
+
+Au-dessus du runtime, une couche **hors API stable** qui vise à rapprocher un petit modèle
+local d'un modèle frontier par scaffolding agentic générique (levier prouvé : **sélection de
+contexte**). Lancer un solver sur une tâche : `python -m agent.run --model <gguf> "ta tâche"`
+(mode `--chat` pour itérer). Voir [agent/eval/README.md](agent/eval/README.md) et la section
+dédiée d'[ARCHITECTURE.md](ARCHITECTURE.md).
 
 Voir [ARCHITECTURE.md](ARCHITECTURE.md) pour l'état actuel du système, et
 [CONTEXT.md](CONTEXT.md) pour le journal chronologique des décisions techniques.
