@@ -251,7 +251,7 @@ def make_context_solver(chat: ChatFn, max_files: int = 4) -> Solver:
         selected = _select_context_files(prompt, workdir, max_files)
         message = prompt
         if selected:
-            message += "\n\nFichiers pertinents :\n" + _render_files(workdir, selected)
+            message += "\n\nFichiers pertinents :\n" + _render_files(workdir, selected, keywords=_prompt_keywords(prompt))
         reply = chat([{"role": "system", "content": _INSTRUCTION}, {"role": "user", "content": message}])
         _apply_reply(reply, prompt, workdir)
 
@@ -331,17 +331,60 @@ def _prompt_keywords(prompt: str) -> set[str]:
     return {k for k in keywords if len(k) >= 4 and k not in _KW_STOP}
 
 
-def _render_files(workdir: Path, paths: list[str], max_chars: int = 4000) -> str:
+def _render_files(workdir: Path, paths: list[str], total_budget: int = 8000, keywords: set[str] | None = None) -> str:
+    """Rend les fichiers sélectionnés dans un BUDGET total (caractères). On montre chaque
+    fichier ENTIER tant qu'il tient (crucial pour une tâche de réécriture : un fragment ferait
+    réémettre un fichier incomplet). Seul le DÉBORDEMENT est compacté autour des mots-clés."""
     workdir = Path(workdir)
     parts: list[str] = []
+    used = 0
     for rel in paths:
         path = workdir / rel
-        if path.is_file():
-            body = path.read_text(encoding="utf-8", errors="replace")
-            if len(body) > max_chars:
-                body = body[:max_chars] + "\n[...tronqué...]"
-            parts.append(f"```text path={rel}\n{body}\n```")
+        if not path.is_file():
+            continue
+        remaining = total_budget - used
+        if remaining <= 200:
+            break
+        body = path.read_text(encoding="utf-8", errors="replace")
+        if len(body) > remaining:
+            body = _compact_around_keywords(body, keywords or set(), remaining)
+        parts.append(f"```text path={rel}\n{body}\n```")
+        used += len(body)
     return "\n\n".join(parts)
+
+
+def _compact_around_keywords(content: str, keywords: set[str], max_chars: int) -> str:
+    """Compacte un gros fichier en gardant la TÊTE (imports/structure) + les FENÊTRES autour
+    des mots-clés du prompt — au lieu de tronquer bêtement la tête (qui coupe le bug s'il est
+    plus bas). Sans mots-clés : repli sur la troncature tête."""
+    if not keywords:
+        return content[: max_chars] + "\n[...tronqué...]"
+    lines = content.splitlines()
+    keep = [False] * len(lines)
+    for i in range(min(len(lines), 12)):  # tête : docstring/imports
+        keep[i] = True
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if any(kw in low for kw in keywords):
+            for j in range(max(0, i - 3), min(len(lines), i + 14)):  # fenêtre autour du hit
+                keep[j] = True
+
+    out: list[str] = []
+    total = 0
+    gap = False
+    for i, line in enumerate(lines):
+        if keep[i]:
+            if gap:
+                out.append("# [...]")
+                gap = False
+            out.append(line)
+            total += len(line) + 1
+            if total >= max_chars:
+                out.append("# [...tronqué...]")
+                break
+        else:
+            gap = True
+    return "\n".join(out)
 
 
 def _apply_reply(reply: str, prompt: str, workdir: Path) -> None:

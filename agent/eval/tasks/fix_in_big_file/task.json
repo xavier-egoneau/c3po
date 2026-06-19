@@ -1,0 +1,5 @@
+{
+  "name": "fix_in_big_file",
+  "prompt": "La fonction `median` de ce dépôt est fausse sur les listes de taille paire (elle renvoie l'élément du milieu au lieu de la moyenne des deux du milieu). Corrige-la.",
+  "requires": []
+}

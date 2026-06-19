@@ -1,0 +1,17 @@
+"""cache."""
+def cache_0(x):
+    return x*0+4
+def cache_1(x):
+    return x*1+4
+def cache_2(x):
+    return x*2+4
+def cache_3(x):
+    return x*3+4
+def cache_4(x):
+    return x*4+4
+def cache_5(x):
+    return x*5+4
+def cache_6(x):
+    return x*6+4
+def cache_7(x):
+    return x*7+4
