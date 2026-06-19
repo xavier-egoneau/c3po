@@ -121,9 +121,14 @@ def cmd_run(args):
     except RuntimeError as e:
         print(str(e))
         return
+    equalize = getattr(args, "equalize", False)
+
     print(engine)
     print()
     print("Session de chat (Ctrl+C ou 'exit' pour quitter)")
+    if equalize:
+        print("Mode égaliseur : compaction de contexte + retry sur sortie vide.")
+        print("  Image : tape  /img <chemin> <ta question>  → le sidecar vision la décrit.")
     print("─" * 50)
 
     history = []
@@ -138,7 +143,25 @@ def cmd_run(args):
             if not user_input or user_input.lower() in ("exit", "quit", "q"):
                 break
 
-            history.append({"role": "user", "content": user_input})
+            if equalize and user_input.startswith("/img "):
+                from .context import route_vision_messages
+
+                rest = user_input[len("/img "):].strip().split(maxsplit=1)
+                img = rest[0]
+                question = rest[1] if len(rest) > 1 else "Décris cette image."
+                url = img if img.startswith(("http://", "https://", "data:", "file://")) \
+                    else "file://" + str(Path(img).expanduser().resolve())
+                print("[routage vision…]", flush=True)
+                routed, used = route_vision_messages([
+                    {"role": "user", "content": [
+                        {"type": "text", "text": question},
+                        {"type": "image_url", "image_url": {"url": url}},
+                    ]}
+                ])
+                print("[image décrite ✓]" if used else "[image non décrite — sidecar indisponible ?]")
+                history.append({"role": "user", "content": routed[0]["content"]})
+            else:
+                history.append({"role": "user", "content": user_input})
             history = _maybe_compact_history(engine, history)
             max_tokens = _safe_generation_max_tokens(engine, history, args.max_tokens)
             if max_tokens <= 0:
@@ -169,6 +192,17 @@ def cmd_run(args):
                 continue
 
             print()  # newline après la réponse
+            if equalize and not full_response.strip():
+                # Retry transparent sur sortie vide (température un peu plus haute).
+                retry = engine.chat(
+                    history,
+                    max_tokens=max_tokens,
+                    temperature=min(1.0, args.temperature + 0.3),
+                    stream=False,
+                )
+                full_response = retry["choices"][0]["message"]["content"]
+                if full_response.strip():
+                    print(f"Assistant (retry) : {full_response}")
             history.append({"role": "assistant", "content": full_response})
 
     except KeyboardInterrupt:
@@ -590,6 +624,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Limite de tokens générés (auto si omis : jusqu'à la fin de la "
                             "réponse ou la limite de contexte)")
     p_run.add_argument("--temperature", type=float, default=0.7)
+    p_run.add_argument("--equalize", action="store_true",
+                       help="Mode égaliseur : routage vision (commande /img <chemin> <question>) "
+                            "et retry sur sortie vide, en plus de la compaction de contexte.")
 
     # search
     p_search = sub.add_parser("search", help="Cherche sur HF les modèles GGUF qui tiennent dans ton hardware")
