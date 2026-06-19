@@ -287,7 +287,48 @@ def _select_context_files(prompt: str, workdir: Path, max_files: int) -> list[st
                 if candidate in all_files and candidate not in selected:
                     selected.append(candidate)
                     frontier.append(candidate)
+
+    # Pertinence par CONTENU : si le fichier utile n'est pas nommé dans le prompt, on le
+    # retrouve via les mots-clés/identifiants du prompt présents dans le CONTENU des fichiers.
+    if len(selected) < max_files:
+        keywords = _prompt_keywords(prompt)
+        scored: list[tuple[int, int, str]] = []
+        for rel, path in all_files.items():
+            if rel in selected:
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                continue
+            score = sum(1 for kw in keywords if kw in content)
+            if score:
+                scored.append((score, len(content), rel))
+        scored.sort(key=lambda item: (-item[0], item[1]))  # plus pertinent, puis plus court
+        for _, _, rel in scored:
+            if len(selected) >= max_files:
+                break
+            selected.append(rel)
     return selected[:max_files]
+
+
+_KW_STOP = {
+    "dans", "pour", "avec", "cette", "fonction", "fichier", "resultat", "valeur", "valeurs",
+    "python", "depot", "sans", "casser", "reste", "trouve", "corrige", "corriger", "milieu",
+    "elements", "taille", "liste", "listes", "paire", "faux", "renvoie", "contient", "function",
+    "file", "value", "values", "return", "depuis", "elle", "deux", "leur", "code", "bug",
+}
+
+
+def _prompt_keywords(prompt: str) -> set[str]:
+    """Identifiants/mots-clés significatifs du prompt (pour la pertinence par contenu).
+    Priorise les termes entre `backticks` (souvent des identifiants de code)."""
+    keywords: set[str] = set()
+    for span in re.findall(r"`([^`]+)`", prompt):
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", span):
+            keywords.add(token.lower())
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", prompt):
+        keywords.add(token.lower())
+    return {k for k in keywords if len(k) >= 4 and k not in _KW_STOP}
 
 
 def _render_files(workdir: Path, paths: list[str], max_chars: int = 4000) -> str:

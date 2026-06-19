@@ -1,0 +1,5 @@
+{
+  "name": "fix_median_unnamed",
+  "prompt": "Dans ce dépôt Python, la fonction `median` renvoie un résultat faux sur les listes de taille paire : elle renvoie l'élément du milieu au lieu de la moyenne des deux éléments du milieu. Trouve le fichier qui contient cette fonction et corrige-la, sans casser le reste.",
+  "requires": []
+}
